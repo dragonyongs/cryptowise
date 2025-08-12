@@ -57,7 +57,7 @@
                     "value": "public, max-age=300"
                 }
             ]
-        }.
+        },
         {
             "source": "/assets/(.*)",
             "headers": [
