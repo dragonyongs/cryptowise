@@ -15,7 +15,7 @@ export default class RateLimiter {
     // 최대 요청 수 초과시 대기
     if (this.requests.length >= this.maxRequests) {
       const waitTime = this.windowMs - (now - this.requests[0])
-      console.log(`Rate limit 대기: ${waitTime}ms`)
+      console.log(`⏳ Rate limit 대기: ${waitTime}ms`)
       await new Promise(resolve => setTimeout(resolve, waitTime))
     }
     

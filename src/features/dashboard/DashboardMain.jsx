@@ -11,11 +11,11 @@ export default function DashboardMain() {
     const [error, setError] = useState(null)
     const [lastUpdate, setLastUpdate] = useState(null)
     const [retryCount, setRetryCount] = useState(0)
-    const [connectionStatus, setConnectionStatus] = useState('online') // 🆕 연결 상태
-    const [dataSource, setDataSource] = useState('unknown') // 🆕 데이터 소스
+    const [connectionStatus, setConnectionStatus] = useState('online')
+    const [dataSource, setDataSource] = useState('unknown')
 
     /**
-     * 🚀 개선된 가격 데이터 가져오기
+     * 🚀 개선된 가격 데이터 가져오기 (상태 업데이트 추가)
      */
     const fetchPricesWithRetry = useCallback(async (attempt = 0) => {
         try {
@@ -25,7 +25,6 @@ export default function DashboardMain() {
 
             console.log(`🔄 가격 데이터 요청 시도 ${attempt + 1}`)
 
-            // coinGeckoService의 새로운 메서드 사용
             const data = await coinGeckoService.getMarketsData('krw', 3, 'bitcoin,ethereum,ripple')
 
             if (!data || data.length === 0) {
@@ -34,14 +33,16 @@ export default function DashboardMain() {
 
             setPrices(data)
             setLastUpdate(new Date())
-            setRetryCount(0)
+            setRetryCount(0) // 성공 시 재시도 카운트 초기화
             setConnectionStatus('online')
 
-            // 데이터 소스 판별
-            if (data[0]?.last_updated && new Date(data[0].last_updated) > new Date(Date.now() - 60000)) {
+            // 데이터 소스 판별 개선
+            if (data[0]?._isDummy) {
+                setDataSource('dummy')
+            } else if (data[0]?.last_updated && new Date(data[0].last_updated) > new Date(Date.now() - 60000)) {
                 setDataSource('live') // 실시간 데이터
             } else {
-                setDataSource('cached') // 캐시 또는 더미 데이터
+                setDataSource('cached') // 캐시 데이터
             }
 
             console.log(`✅ 가격 데이터 성공: ${data.length}개 코인`)
@@ -93,6 +94,7 @@ export default function DashboardMain() {
             const data = await response.json()
             setPrices(data)
             setLastUpdate(new Date())
+            setRetryCount(0) // 성공 시 재시도 카운트 초기화
             setConnectionStatus('online')
             setDataSource('proxy')
 
@@ -101,6 +103,7 @@ export default function DashboardMain() {
         } catch (err) {
             console.error('❌ CORS 프록시 실패:', err.message)
             setError(`프록시 서비스 오류: ${err.message}`)
+            setRetryCount(prev => prev + 1)
             setConnectionStatus('offline')
         } finally {
             setLoading(false)
@@ -156,7 +159,9 @@ export default function DashboardMain() {
                 <span>{label}</span>
                 {dataSource !== 'unknown' && (
                     <span className="text-gray-500">
-                        ({dataSource === 'live' ? '실시간' : dataSource === 'cached' ? '캐시' : '프록시'})
+                        ({dataSource === 'live' ? '실시간' :
+                            dataSource === 'cached' ? '캐시' :
+                                dataSource === 'dummy' ? '더미' : '프록시'})
                     </span>
                 )}
             </div>
@@ -266,8 +271,8 @@ export default function DashboardMain() {
 
                                 <div className="flex items-center justify-between">
                                     <span className={`text-sm font-medium ${coin.price_change_percentage_24h >= 0
-                                            ? 'text-green-600'
-                                            : 'text-red-600'
+                                        ? 'text-green-600'
+                                        : 'text-red-600'
                                         }`}>
                                         {coin.price_change_percentage_24h >= 0 ? '+' : ''}
                                         {coin.price_change_percentage_24h.toFixed(2)}%
