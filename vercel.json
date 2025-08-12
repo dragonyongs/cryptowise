@@ -2,36 +2,10 @@
     "buildCommand": "npm run build",
     "outputDirectory": "dist",
     "framework": "vite",
-    "functions": {
-        "api/external/coinGecko.js": {
-            "runtime": "@vercel/node@3",
-            "memory": 128,
-            "maxDuration": 10
-        }
-    },
     "rewrites": [
-        {
-            "source": "/api/coingecko/(.*)",
-            "destination": "/api/external/coinGecko?endpoint=$1"
-        },
         {
             "source": "/(.*)",
             "destination": "/index.html"
-        }
-    ],
-    "headers": [
-        {
-            "source": "/api/(.*)",
-            "headers": [
-                {
-                    "key": "Access-Control-Allow-Origin",
-                    "value": "*"
-                },
-                {
-                    "key": "Access-Control-Allow-Methods",
-                    "value": "GET, OPTIONS"
-                }
-            ]
         }
     ]
 }

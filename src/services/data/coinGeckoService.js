@@ -23,8 +23,12 @@ class CoinGeckoService {
       // 개발환경에서는 Vite 프록시 먼저 시도
       if (this.isDev) {
         try {
-          const url = `${this.baseURL}/coins/markets?vs_currency=${vsCurrency}&per_page=${perPage}&ids=${ids}`;
-          const response = await fetch(url);
+          const proxyUrl = 'https://api.allorigins.win/raw?url=';
+          const targetUrl = encodeURIComponent(
+              'https://api.coingecko.com/api/v3/coins/markets?vs_currency=krw&per_page=3&ids=bitcoin,ethereum,ripple'
+          );
+          
+          const response = await fetch(`${proxyUrl}${targetUrl}`);
           
           if (response.ok) {
             const data = await response.json();
