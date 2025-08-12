@@ -14,7 +14,41 @@ export default defineConfig({
     }
   },
   server: {
+    proxy: {
+      '/api/coingecko': {
+        target: 'https://api.coingecko.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/coingecko/, ''),
+        configure: (proxy, _options) => {
+          proxy.on('error', (err, _req, _res) => {
+            console.log('proxy error', err);
+          });
+          proxy.on('proxyReq', (proxyReq, req, _res) => {
+            console.log('Sending Request to the Target:', req.method, req.url);
+          });
+          proxy.on('proxyRes', (proxyRes, req, _res) => {
+            console.log('Received Response from the Target:', proxyRes.statusCode, req.url);
+          });
+        },
+      },
+      '/api/news': {
+        target: 'https://api.allorigins.win',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/news/, '')
+      }
+    },
     host: true, // 네트워크에서 접근 가능하도록 설정
     port: 5300
-  }
+  },
+  // headers: [
+  //   {
+  //     "source": "/(.*)",
+  //     "headers": [
+  //       {
+  //         "key": "Access-Control-Allow-Origin",
+  //         "value": "*"
+  //       }
+  //     ]
+  //   }
+  // ]
 })
