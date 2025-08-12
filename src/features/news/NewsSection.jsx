@@ -38,21 +38,30 @@ export default function NewsSection() {
 
     useEffect(() => {
         const loadAllNews = async () => {
-            setLoading(true)
-            setError(null) // 에러 초기화
-
+            setLoading(true);
             try {
-                await Promise.all(symbols.map(symbol => fetchNewsForSymbol(symbol)))
+                await Promise.all(symbols.map(symbol => fetchNewsForSymbol(symbol)));
             } catch (err) {
-                console.error('뉴스 로딩 전체 실패:', err)
-                setError('뉴스 서비스에 일시적인 문제가 있습니다. 잠시 후 다시 시도해주세요.')
+                console.error('뉴스 로딩 실패:', err);
+                // 🆕 더미 데이터로 Fallback
+                const dummyData = {};
+                symbols.forEach(symbol => {
+                    dummyData[symbol] = {
+                        symbol,
+                        sentimentScore: 0,
+                        sentiment: 'Neutral',
+                        newsCount: 0,
+                        topHeadlines: [],
+                        isDummy: true
+                    };
+                });
+                setNewsData(dummyData);
             } finally {
-                setLoading(false)
+                setLoading(false);
             }
-        }
-
-        loadAllNews()
-    }, [])
+        };
+        loadAllNews();
+    }, []);
 
     const getSentimentColor = (score) => {
         if (score > 0.1) return 'text-green-600'

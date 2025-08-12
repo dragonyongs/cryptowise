@@ -1,4 +1,10 @@
 // src/services/news/newsService.js
+/**
+ * 실무용 뉴스 수집 및 감성 분석 서비스
+ * - Vercel 서버리스 프록시를 통한 RSS 접근 (CORS 문제 해결)
+ * - 에러 처리 강화
+ * - Fallback 시스템
+ */
 class NewsService {
   constructor() {
     this.sources = [
@@ -9,19 +15,20 @@ class NewsService {
     ];
     
     this.cache = new Map();
-    this.cacheExpiry = 30 * 60 * 1000;
+    this.cacheExpiry = 30 * 60 * 1000; // 30분
     this.maxCacheSize = 1000;
     
-    // 🆕 실서버에서는 뉴스 기능 비활성화 플래그
+    // 🆕 실서버 감지 (window 객체 안전 체크)
     this.isProduction = typeof window !== 'undefined' && 
-                       !window.location.hostname.includes('localhost');
+                       !window.location.hostname.includes('localhost') &&
+                       !window.location.hostname.includes('127.0.0.1');
     
     // 주기적 캐시 정리
     setInterval(() => this.cleanupCache(), 10 * 60 * 1000);
   }
 
   /**
-   * 🚀 개선된 감성 점수 반환 (에러 방지)
+   * 감성 점수 반환 (CORS 에러 처리 포함)
    */
   async getSentimentScore(symbol, timestamp) {
     const cacheKey = `sentiment_${symbol}_${timestamp}`;
@@ -33,21 +40,6 @@ class NewsService {
         if (Date.now() - cached.timestamp < this.cacheExpiry) {
           return cached.score;
         }
-      }
-
-      // 🆕 프로덕션에서는 더미 데이터만 사용
-      if (this.isProduction) {
-        console.log(`🔄 프로덕션 환경: ${symbol} 더미 감성 점수 사용`);
-        const dummyScore = this.generateDummySentimentScore(symbol);
-        
-        this.cache.set(cacheKey, {
-          score: dummyScore,
-          timestamp: Date.now(),
-          newsCount: 0,
-          isDummy: true
-        });
-        
-        return dummyScore;
       }
 
       const startTime = Date.now();
@@ -75,7 +67,16 @@ class NewsService {
     } catch (error) {
       console.error(`뉴스 감성 분석 실패 (${symbol}):`, error.message);
       
-      // 최종 Fallback: 더미 점수 반환
+      // Fallback: 이전 캐시값 사용
+      const oldCache = Array.from(this.cache.entries())
+        .filter(([key]) => key.startsWith(`sentiment_${symbol}_`))
+        .sort((a, b) => b[1].timestamp - a[1].timestamp)[0]?.[1];
+      
+      if (oldCache) {
+        console.log(`${symbol} 이전 캐시값 사용: ${oldCache.score}`);
+        return oldCache.score;
+      }
+      
       return this.generateDummySentimentScore(symbol);
     }
   }
@@ -108,67 +109,53 @@ class NewsService {
   }
 
   /**
-   * 🚀 안전한 RSS 피드 수집
+   * RSS 피드에서 최근 뉴스 수집
+   * @param {string} symbol - 대상 심볼
+   * @returns {Promise<Array>} 뉴스 기사 배열
    */
   async collectRecentNews(symbol) {
-    if (this.isProduction) {
-      console.log('🔄 프로덕션 환경: RSS 피드 수집 건너뛰기');
-      return [];
-    }
-
     const allNews = [];
     const keywords = this.getKeywords(symbol);
     
-    // 각 소스에 대해 안전하게 시도
-    for (const source of this.sources) {
-      try {
-        const news = await this.fetchRSSFeedSafely(source, keywords);
-        if (news && news.length > 0) {
-          allNews.push(...news);
-        }
-      } catch (error) {
-        console.warn(`RSS 소스 실패 (${source}):`, error.message);
-        continue; // 다음 소스로 계속
+    // 모든 심볼의 뉴스를 병렬로 로드
+    const promises = this.sources.map(source => this.fetchRSSFeed(source, keywords));
+    const results = await Promise.allSettled(promises);
+    
+    results.forEach(result => {
+      if (result.status === 'fulfilled' && result.value.length > 0) {
+        allNews.push(...result.value);
       }
-    }
+    });
     
     return allNews
-      .sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate))
-      .slice(0, 50);
+      .sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate)) // 최신순 정렬
+      .slice(0, 50); // 전체 최대 50개
   }
 
   /**
-   * 🆕 안전한 RSS 피드 가져오기
+   * RSS 피드 가져오기 (Vercel 프록시 사용)
+   * @param {string} source - RSS URL
+   * @param {Array} keywords - 필터링 키워드
+   * @returns {Promise<Array>} 파싱된 뉴스 배열
    */
-  async fetchRSSFeedSafely(source, keywords) {
+  async fetchRSSFeed(source, keywords) {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-      
-      const response = await fetch(source, {
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; CryptoWise/1.0)',
-          'Accept': 'application/rss+xml, application/xml, text/xml, */*'
-        }
-      });
-      
-      clearTimeout(timeoutId);
-      
+      // 🆕 Vercel 프록시 사용
+      const proxyUrl = `/api/rss-proxy?url=${encodeURIComponent(source)}`;
+      const response = await fetch(proxyUrl);
+
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw new Error(`Proxy HTTP ${response.status}`);
       }
-      
-      const contentType = response.headers.get('content-type') || '';
+
       const xmlText = await response.text();
-      
-      // 🆕 XML 응답 검증
-      if (!this.isValidXML(xmlText)) {
-        throw new Error('응답이 유효한 XML이 아닙니다');
+
+      // 🆕 XML 유효성 검사
+      if (!xmlText.includes('<rss') && !xmlText.includes('<?xml')) {
+        throw new Error('Invalid XML response');
       }
-      
-      return this.parseRSSXMLSafely(xmlText, keywords);
-      
+
+      return this.parseRSSXML(xmlText, keywords);
     } catch (error) {
       console.warn(`RSS 피드 오류 (${source}):`, error.message);
       return [];
@@ -176,77 +163,42 @@ class NewsService {
   }
 
   /**
-   * 🆕 XML 유효성 검사
+   * RSS XML 직접 파싱
+   * @param {string} xmlText - RSS XML 문자열
+   * @param {Array} keywords - 필터링 키워드
+   * @returns {Array} 파싱된 뉴스 배열
    */
-  isValidXML(xmlText) {
-    // 기본적인 XML 구조 확인
-    if (!xmlText || typeof xmlText !== 'string') {
-      return false;
-    }
-    
-    // HTML 응답 감지 (404 페이지 등)
-    if (xmlText.toLowerCase().includes('<!doctype html') || 
-        xmlText.toLowerCase().includes('<html')) {
-      console.warn('HTML 응답을 받았습니다 (404 페이지일 가능성)');
-      return false;
-    }
-    
-    // 기본적인 XML 태그 확인
-    if (!xmlText.includes('<?xml') && !xmlText.includes('<rss')) {
-      return false;
-    }
-    
-    return true;
-  }
-
-  /**
-   * 🆕 안전한 RSS XML 파싱
-   */
-  parseRSSXMLSafely(xmlText, keywords) {
+  parseRSSXML(xmlText, keywords) {
     try {
       const parser = new DOMParser();
       const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-      
-      // 파싱 에러 체크
-      const parserError = xmlDoc.querySelector('parsererror');
-      if (parserError) {
-        throw new Error('XML 파싱 에러: ' + parserError.textContent);
-      }
       
       const items = Array.from(xmlDoc.querySelectorAll('item'));
       const relevantNews = [];
       
       items.forEach(item => {
-        try {
-          const title = item.querySelector('title')?.textContent?.trim() || '';
-          const description = item.querySelector('description')?.textContent || '';
-          const link = item.querySelector('link')?.textContent?.trim() || '';
-          const pubDate = item.querySelector('pubDate')?.textContent || '';
-          
-          if (!title || !description) {
-            return; // 필수 정보가 없으면 건너뛰기
-          }
-          
-          // HTML 태그 제거
-          const cleanDescription = description.replace(/<[^>]*>/g, '').trim();
-          
-          if (this.isRelevant({ title, description: cleanDescription }, keywords)) {
-            relevantNews.push({
-              title: title.trim(),
-              description: cleanDescription,
-              link: link.trim(),
-              pubDate: new Date(pubDate),
-              source: this.getSourceName(link)
-            });
-          }
-        } catch (itemError) {
-          console.warn('RSS 아이템 파싱 실패:', itemError.message);
+        const title = item.querySelector('title')?.textContent || '';
+        const description = item.querySelector('description')?.textContent || '';
+        const link = item.querySelector('link')?.textContent || '';
+        const pubDate = item.querySelector('pubDate')?.textContent || '';
+        
+        // HTML 태그 제거
+        const cleanDescription = description.replace(/<[^>]*>/g, '').trim();
+        
+        if (this.isRelevant({ title, description: cleanDescription }, keywords)) {
+          relevantNews.push({
+            title: title.trim(),
+            description: cleanDescription,
+            link: link.trim(),
+            pubDate: new Date(pubDate),
+            source: this.getSourceName(link)
+          });
         }
       });
       
-      return relevantNews.slice(0, 10);
+      return relevantNews.slice(0, 10); // 소스당 최대 10개
     } catch (error) {
-      console.error('XML 파싱 실패:', error.message);
+      console.error('XML 파싱 오류:', error);
       return [];
     }
   }
@@ -261,19 +213,6 @@ class NewsService {
       const news = await this.collectRecentNews(symbol);
       const score = this.analyzeSentiment(news, symbol);
       
-      // 프로덕션에서는 더미 데이터 사용
-      if (this.isProduction || news.length === 0) {
-        return {
-          symbol,
-          sentimentScore: this.generateDummySentimentScore(symbol),
-          sentiment: this.getSentimentLabel(this.generateDummySentimentScore(symbol)),
-          newsCount: 0,
-          topHeadlines: this.generateDummyHeadlines(symbol),
-          lastUpdated: new Date().toISOString(),
-          isDummy: true
-        };
-      }
-      
       return {
         symbol,
         sentimentScore: score,
@@ -285,13 +224,10 @@ class NewsService {
           source: article.source,
           age: this.getArticleAge(article.pubDate)
         })),
-        lastUpdated: new Date().toISOString(),
-        isDummy: false
+        lastUpdated: new Date().toISOString()
       };
     } catch (error) {
       console.error('뉴스 요약 생성 실패:', error);
-      
-      // 에러 시 더미 데이터 반환
       return {
         symbol,
         sentimentScore: this.generateDummySentimentScore(symbol),
@@ -299,8 +235,7 @@ class NewsService {
         newsCount: 0,
         topHeadlines: this.generateDummyHeadlines(symbol),
         lastUpdated: new Date().toISOString(),
-        isDummy: true,
-        error: error.message
+        isDummy: true
       };
     }
   }
@@ -329,10 +264,11 @@ class NewsService {
     ];
   }
 
-  // 기존 메서드들 유지...
+  // 기존 메서드들 유지 (analyzeSentiment, getKeywords 등)
   analyzeSentiment(articles, symbol) {
-    if (!articles.length) return this.generateDummySentimentScore(symbol);
+    if (!articles.length) return 0;
 
+    // 실제 뉴스에서 자주 등장하는 키워드로 업데이트
     const sentimentKeywords = {
       strong_positive: ['breakout', 'surge', 'rally', 'moonshot', 'skyrocket', 'ATH', 'all-time high'],
       positive: ['bullish', 'adoption', 'partnership', 'upgrade', 'growth', 'rise', 'gain', 'pump'],
@@ -349,13 +285,20 @@ class NewsService {
       const text = `${article.title} ${article.description}`.toLowerCase();
       const age = this.getArticleAge(article.pubDate);
       
+      // 시간별 가중치 (최신 뉴스일수록 높은 가중치)
       const timeWeight = age < 2 ? 1.0 : age < 6 ? 0.7 : age < 24 ? 0.4 : 0.1;
+      
+      // 심볼 언급 가중치
       const symbolWeight = this.isSymbolMentioned(text, symbol) ? 2.0 : 0.5;
+      
+      // 소스별 신뢰도 가중치
       const sourceWeight = this.getSourceWeight(article.source);
+      
       const finalWeight = timeWeight * symbolWeight * sourceWeight;
       
       let articleScore = 0;
       
+      // 강한 감성 키워드 점수 계산
       Object.entries(sentimentKeywords).forEach(([category, keywords]) => {
         const matches = keywords.reduce((count, keyword) => {
           return count + (text.match(new RegExp(`\\b${keyword}\\b`, 'g')) || []).length;
@@ -377,16 +320,17 @@ class NewsService {
       totalWeight += finalWeight;
     });
 
-    if (totalWeight === 0) return this.generateDummySentimentScore(symbol);
+    if (totalWeight === 0) return 0;
     
     const rawScore = totalScore / totalWeight;
+    // 시그모이드 함수로 -1~1 범위로 정규화
     return Math.tanh(rawScore / 10);
   }
 
   getArticleAge(pubDate) {
     const now = new Date();
     const articleDate = new Date(pubDate);
-    return (now - articleDate) / (1000 * 60 * 60);
+    return (now - articleDate) / (1000 * 60 * 60); // 시간 단위
   }
 
   getSourceWeight(source) {
@@ -394,8 +338,7 @@ class NewsService {
       'cointelegraph': 1.0,
       'coindesk': 1.0,
       'bitcoinist': 0.8,
-      'cryptonews': 0.7,
-      'demo': 0.5
+      'cryptonews': 0.7
     };
     
     const sourceName = source.toLowerCase();
