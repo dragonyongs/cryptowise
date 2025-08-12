@@ -4,14 +4,10 @@
     "framework": "vite",
     "functions": {
         "api/external/coinGecko.js": {
-            "runtime": "nodejs18.x",
-            "memory": 128,
-            "maxDuration": 10
+            "runtime": "@vercel/node"
         },
         "api/rss-proxy.js": {
-            "runtime": "nodejs18.x",
-            "memory": 128,
-            "maxDuration": 10
+            "runtime": "@vercel/node"
         }
     },
     "rewrites": [
