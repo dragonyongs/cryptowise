@@ -15,10 +15,10 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api/coingecko': {
+      '/api/external/coinGecko': {
         target: 'https://api.coingecko.com',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/coingecko/, ''),
+        rewrite: (path) => path.replace(/^\/api\/external\/coinGecko/, '/api/v3'),
         configure: (proxy, _options) => {
           proxy.on('error', (err, _req, _res) => {
             console.log('proxy error', err);
@@ -30,6 +30,10 @@ export default defineConfig({
             console.log('Received Response from the Target:', proxyRes.statusCode, req.url);
           });
         },
+      },
+      '/api/rss-proxy': {
+        target: 'https://cointelegraph.com',  // RSS 소스 예시
+        changeOrigin: true
       },
       '/api/news': {
         target: 'https://api.allorigins.win',

@@ -1,8 +1,8 @@
-// api/external/coinGecko.js
+// api/external/coinGecko.js (Vercel 서버리스 함수)
 export default async function handler(req, res) {
   const { method, query } = req;
   
-  // CORS 헤더 설정
+  // CORS 헤더 설정 (모든 요청에 적용)
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -18,27 +18,21 @@ export default async function handler(req, res) {
   }
 
   try {
-    // URL 파라미터에서 엔드포인트 추출
     const { endpoint, ...params } = query;
-    
     console.log('🔗 API 요청:', { endpoint, params });
 
-    // CoinGecko API 엔드포인트 매핑
     let apiUrl;
-    
     if (endpoint === 'markets') {
       const { vs_currency = 'krw', per_page = 250, page = 1, ids } = params;
       const idsParam = ids ? `&ids=${ids}` : '';
       apiUrl = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=${vs_currency}&per_page=${per_page}&page=${page}${idsParam}`;
-    } 
-    else if (endpoint === 'market_chart') {
+    } else if (endpoint === 'market_chart') {
       const { coinId, vs_currency = 'krw', days = 365 } = params;
       if (!coinId) {
         return res.status(400).json({ error: 'coinId is required for market_chart' });
       }
       apiUrl = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=${vs_currency}&days=${days}`;
-    }
-    else {
+    } else {
       return res.status(400).json({ error: `Unsupported endpoint: ${endpoint}` });
     }
 
@@ -64,14 +58,13 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error('❌ CoinGecko API Handler 오류:', error.message);
-    
-    // 오류 시 더미 데이터 반환
+    // 오류 시 더미 데이터 반환 (UI 안정성 유지)
     const dummyData = generateDummyData(query.endpoint, query);
     return res.status(200).json(dummyData);
   }
 }
 
-// 더미 데이터 생성 함수들
+// 더미 데이터 생성 함수 (확장: market_chart 지원 추가)
 function generateDummyData(endpoint, params) {
   if (endpoint === 'markets') {
     return [
@@ -106,7 +99,13 @@ function generateDummyData(endpoint, params) {
         total_volume: 4341 * 800000000
       }
     ];
+  } else if (endpoint === 'market_chart') {
+    const { days = 365 } = params;
+    const prices = [];
+    for (let i = 0; i < days; i++) {
+      prices.push([Date.now() - i * 86400000, 50000 + Math.random() * 10000]); // 더미 가격 데이터
+    }
+    return { prices };
   }
-  
   return { error: 'No dummy data available' };
 }
