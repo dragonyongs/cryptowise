@@ -9,6 +9,7 @@ export default function NewsSection() {
     const [newsData, setNewsData] = useState({})
     const [loading, setLoading] = useState(true)
     const [selectedSymbol, setSelectedSymbol] = useState('BTC')
+    const [error, setError] = useState(null)
 
     const symbols = ['BTC', 'ETH', 'SOL', 'ADA', 'XRP']
 
@@ -18,17 +19,38 @@ export default function NewsSection() {
             setNewsData(prev => ({ ...prev, [symbol]: summary }))
         } catch (error) {
             console.error(`뉴스 로드 실패 (${symbol}):`, error)
-            setNewsData(prev => ({ ...prev, [symbol]: null }))
+            // 에러가 발생해도 더미 데이터로 대체되므로 UI는 정상 표시
+            setNewsData(prev => ({
+                ...prev,
+                [symbol]: {
+                    symbol,
+                    sentimentScore: 0,
+                    sentiment: 'Neutral',
+                    newsCount: 0,
+                    topHeadlines: [],
+                    lastUpdated: new Date().toISOString(),
+                    isDummy: true,
+                    error: '뉴스 로딩 실패'
+                }
+            }))
         }
     }
 
     useEffect(() => {
         const loadAllNews = async () => {
             setLoading(true)
-            // 모든 심볼의 뉴스를 병렬로 로드
-            await Promise.all(symbols.map(symbol => fetchNewsForSymbol(symbol)))
-            setLoading(false)
+            setError(null) // 에러 초기화
+
+            try {
+                await Promise.all(symbols.map(symbol => fetchNewsForSymbol(symbol)))
+            } catch (err) {
+                console.error('뉴스 로딩 전체 실패:', err)
+                setError('뉴스 서비스에 일시적인 문제가 있습니다. 잠시 후 다시 시도해주세요.')
+            } finally {
+                setLoading(false)
+            }
         }
+
         loadAllNews()
     }, [])
 
