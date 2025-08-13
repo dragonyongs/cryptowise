@@ -1,4 +1,4 @@
-// api/external/coinGecko.js (Vercel 서버리스 함수)
+// api/external/coinGecko.js (수정된 버전)
 export default async function handler(req, res) {
   const { method, query } = req;
   
@@ -32,7 +32,17 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'coinId is required for market_chart' });
       }
       apiUrl = `https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=${vs_currency}&days=${days}`;
-    } else {
+    } 
+    // 👇 여기에 search 엔드포인트 추가
+    else if (endpoint === 'search') {
+      const { query: searchQuery } = params;
+      if (!searchQuery) {
+        return res.status(400).json({ error: 'query is required for search' });
+      }
+      apiUrl = `https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(searchQuery)}`;
+    }
+    // 👆 여기까지 추가
+    else {
       return res.status(400).json({ error: `Unsupported endpoint: ${endpoint}` });
     }
 
@@ -64,7 +74,7 @@ export default async function handler(req, res) {
   }
 }
 
-// 더미 데이터 생성 함수 (확장: market_chart 지원 추가)
+// 더미 데이터 생성 함수에도 search 케이스 추가
 function generateDummyData(endpoint, params) {
   if (endpoint === 'markets') {
     return [
@@ -103,9 +113,49 @@ function generateDummyData(endpoint, params) {
     const { days = 365 } = params;
     const prices = [];
     for (let i = 0; i < days; i++) {
-      prices.push([Date.now() - i * 86400000, 50000 + Math.random() * 10000]); // 더미 가격 데이터
+      prices.push([Date.now() - i * 86400000, 50000 + Math.random() * 10000]);
     }
     return { prices };
+  } 
+  // 👇 search용 더미 데이터도 추가
+  else if (endpoint === 'search') {
+    const { query: searchQuery } = params;
+    const dummySearchResults = [
+      {
+        id: 'bitcoin',
+        symbol: 'btc',
+        name: 'Bitcoin',
+        market_cap_rank: 1,
+        thumb: '/crypto-icons/btc.png',
+        large: '/crypto-icons/btc.png'
+      },
+      {
+        id: 'ethereum', 
+        symbol: 'eth',
+        name: 'Ethereum',
+        market_cap_rank: 2,
+        thumb: '/crypto-icons/eth.png',
+        large: '/crypto-icons/eth.png'
+      },
+      {
+        id: 'cardano',
+        symbol: 'ada', 
+        name: 'Cardano',
+        market_cap_rank: 8,
+        thumb: '/crypto-icons/ada.png',
+        large: '/crypto-icons/ada.png'
+      }
+    ];
+    
+    // 검색어와 매칭되는 코인만 필터링
+    const filteredCoins = dummySearchResults.filter(coin =>
+      coin.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      coin.symbol.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+    
+    return { coins: filteredCoins };
   }
+  // 👆 여기까지 추가
+  
   return { error: 'No dummy data available' };
 }

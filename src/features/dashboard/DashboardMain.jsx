@@ -5,7 +5,9 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { coinGeckoService } from '@/services/data/coinGeckoService'
 
+
 export default function DashboardMain() {
+    // const { user, isAuthenticated } = useAuth(); // 미사용 변수 제거
     const [prices, setPrices] = useState([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
@@ -123,15 +125,21 @@ export default function DashboardMain() {
 
     /**
      * 🆕 자동 갱신 간격 조정 (연결 상태에 따라)
+     * 간격 상수로 분리, 추후 환경설정/플랜별로 조정 가능
      */
+    const AUTO_REFRESH_INTERVALS = {
+        offline: 5 * 60 * 1000, // 5분
+        live: 5 * 60 * 1000,    // 5분 (기본값, 추후 플랜별 2분 등으로 조정)
+        default: 5 * 60 * 1000, // 5분
+    }
+
     useEffect(() => {
         fetchPricesWithRetry()
 
-        // 연결 상태에 따른 간격 조정
         const getInterval = () => {
-            if (connectionStatus === 'offline') return 300000 // 5분
-            if (dataSource === 'live') return 120000 // 2분
-            return 180000 // 3분 (기본)
+            if (connectionStatus === 'offline') return AUTO_REFRESH_INTERVALS.offline
+            if (dataSource === 'live') return AUTO_REFRESH_INTERVALS.live
+            return AUTO_REFRESH_INTERVALS.default
         }
 
         const interval = setInterval(() => {
@@ -139,6 +147,8 @@ export default function DashboardMain() {
         }, getInterval())
 
         return () => clearInterval(interval)
+        // AUTO_REFRESH_INTERVALS는 상수이므로 dependency array에서 제외
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [fetchPricesWithRetry, connectionStatus, dataSource])
 
     /**

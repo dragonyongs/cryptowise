@@ -2,6 +2,17 @@
     "buildCommand": "npm run build",
     "outputDirectory": "dist",
     "framework": "vite",
+    // "functions": {
+    //     "api/update-coins-data.js": {
+    //         "maxDuration": 30
+    //     }
+    // },
+    // "crons": [
+    //     {
+    //         "path": "/api/update-coins-data",
+    //         "schedule": "0 0 */6 * * *"
+    //     }
+    // ],
     "rewrites": [
         {
             "source": "/api/(.*)",

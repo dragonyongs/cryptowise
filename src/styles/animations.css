@@ -1,0 +1,29 @@
+/* src/styles/animations.css */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+/* 코인 카드 호버 효과 */
+.coin-card {
+  transition: all 0.2s ease;
+}
+
+.coin-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+.dark .coin-card:hover {
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
