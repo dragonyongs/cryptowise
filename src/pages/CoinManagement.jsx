@@ -1,4 +1,5 @@
-// src/pages/CoinManagement.jsx
+// src/pages/CoinManagement.jsx - 로딩 상태 개선 버전
+
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -29,11 +30,12 @@ export default function CoinManagement() {
     const [filters, setFilters] = useState({});
     const [refreshing, setRefreshing] = useState(false);
     const [notification, setNotification] = useState(null);
-    const [limit, setLimit] = useState(20);
+    // ✅ 초기값을 50으로 늘리고 동적 조정
+    const [limit, setLimit] = useState(50);
     const [batchAnalyzing, setBatchAnalyzing] = useState(false);
-    const [batchAnalysisStarted, setBatchAnalysisStarted] = useState(false); // ✅ 추가
-    const [batchProgress, setBatchProgress] = useState(0); // ✅ 진행률 별도 관리
-    const [batchTargetCount, setBatchTargetCount] = useState(0); // ✅ 목표 개수
+    const [batchAnalysisStarted, setBatchAnalysisStarted] = useState(false);
+    const [batchProgress, setBatchProgress] = useState(0);
+    const [batchTargetCount, setBatchTargetCount] = useState(0);
 
     // 중앙 상태
     const {
@@ -44,10 +46,13 @@ export default function CoinManagement() {
         getRemainingSlots,
         isLoading,
         error,
+        // ✅ 실제 로딩 프로그레스 상태 추가
+        loadingProgress,
         initializeData,
         isInitialized,
         addCoin,
-        removeCoin, batchAnalyzeCoins
+        removeCoin,
+        batchAnalyzeCoins
     } = useCoinStore();
 
     // 가격 및 분석 데이터 업데이트 훅
@@ -62,31 +67,44 @@ export default function CoinManagement() {
         }
     }, [availableCoins.length, initializeData]);
 
+    // ✅ 배치 분석 진행률 실시간 업데이트
     useEffect(() => {
         if (!batchAnalysisStarted || !availableCoins.length) return;
 
-        // 배치 분석이 시작된 경우에만 진행률 계산
-        const analyzedCoins = availableCoins.filter(coin =>
-            coin.analysis?.score &&
-            coin.analysis.score > 0 &&
-            coin.analysis.last_analyzed && // 최근 분석된 코인만
-            new Date(coin.analysis.last_analyzed) > new Date(Date.now() - 5 * 60 * 1000) // 5분 이내
-        );
+        // 최근 5분 이내에 분석된 코인들만 계산
+        const recentlyAnalyzed = availableCoins.filter(coin => {
+            if (!coin.analysis?.last_analyzed) return false;
+
+            const analyzedTime = new Date(coin.analysis.last_analyzed);
+            const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+
+            return analyzedTime > fiveMinutesAgo &&
+                coin.analysis.score > 0;
+        });
 
         if (batchTargetCount > 0) {
-            const progress = Math.round((analyzedCoins.length / batchTargetCount) * 100);
+            const progress = Math.min(100, Math.round((recentlyAnalyzed.length / batchTargetCount) * 100));
             setBatchProgress(progress);
 
             // 분석 완료 시 UI 숨김
-            if (analyzedCoins.length >= batchTargetCount) {
+            if (progress >= 100) {
                 setTimeout(() => {
                     setBatchAnalysisStarted(false);
                     setBatchProgress(0);
                     setBatchTargetCount(0);
-                }, 2000); // 2초 후 숨김
+                }, 3000); // 3초 후 숨김
             }
         }
     }, [availableCoins, batchAnalysisStarted, batchTargetCount]);
+
+    // ✅ 초기 표시 개수 동적 조정
+    useEffect(() => {
+        if (availableCoins.length > 0 && limit < availableCoins.length) {
+            // 전체 코인이 100개 미만이면 모두 표시, 아니면 50개씩
+            const optimalLimit = availableCoins.length <= 100 ? availableCoins.length : 50;
+            setLimit(optimalLimit);
+        }
+    }, [availableCoins.length]);
 
     // 알림 표시 헬퍼
     const showNotification = (type, message, duration = 3000) => {
@@ -94,17 +112,14 @@ export default function CoinManagement() {
         setTimeout(() => setNotification(null), duration);
     };
 
-    // ✅ 코인 추가 핸들러 (가격/분석 데이터 자동 업데이트 포함)
+    // 코인 추가 핸들러 (가격/분석 데이터 자동 업데이트 포함)
     const handleAddCoin = async (market) => {
         try {
             const result = addCoin(market);
 
             if (result.success) {
                 showNotification('success', result.message);
-
-                // 코인 추가 후 즉시 가격 및 분석 데이터 업데이트
                 await refreshPriceAndAnalysis();
-
                 console.log(`✅ ${market} 코인 추가 및 데이터 업데이트 완료`);
             } else {
                 showNotification('error', result.message, 5000);
@@ -115,7 +130,7 @@ export default function CoinManagement() {
         }
     };
 
-    // ✅ 코인 제거 핸들러
+    // 코인 제거 핸들러
     const handleRemoveCoin = async (market) => {
         try {
             const result = removeCoin(market);
@@ -132,7 +147,7 @@ export default function CoinManagement() {
         }
     };
 
-    // ✅ 전체 코인 배치 분석 핸들러
+    // ✅ 개선된 전체 코인 배치 분석 핸들러
     const handleBatchAnalysis = async () => {
         setBatchAnalyzing(true);
 
@@ -148,31 +163,41 @@ export default function CoinManagement() {
                 throw new Error('코인 데이터가 로드되지 않았습니다.');
             }
 
-            // ✅ 분석 대상 코인 개수 미리 계산
-            const unanalyzedCoins = currentState.availableCoins.filter(coin =>
-                !coin.analysis?.score || coin.analysis.score === 0
-            );
+            // ✅ 우선순위 기반 분석 대상 선택 (고정값 제거)
+            const unanalyzedCoins = currentState.availableCoins.filter(coin => {
+                // 분석되지 않았거나 1시간 이상 오래된 분석
+                return !coin.analysis?.score ||
+                    coin.analysis.score === 0 ||
+                    (coin.analysis.last_analyzed &&
+                        Date.now() - new Date(coin.analysis.last_analyzed).getTime() > 3600000);
+            });
 
-            const targetCount = Math.min(20, unanalyzedCoins.length);
+            // ✅ 투자 우선순위 순으로 정렬하여 상위 30개 선택
+            const priorityCoins = unanalyzedCoins
+                .sort((a, b) => (b.investment_priority || 0) - (a.investment_priority || 0))
+                .slice(0, 30); // 20 → 30으로 증가
 
-            if (targetCount === 0) {
-                showNotification('info', '모든 코인이 이미 분석되었습니다.', 3000);
+            if (priorityCoins.length === 0) {
+                showNotification('info', '모든 우선순위 코인이 이미 분석되었습니다.', 3000);
                 return;
             }
 
-            // ✅ 배치 분석 상태 시작
+            // 배치 분석 상태 시작
             setBatchAnalysisStarted(true);
-            setBatchTargetCount(targetCount);
+            setBatchTargetCount(priorityCoins.length);
             setBatchProgress(0);
 
-            await batchAnalyzeCoins(targetCount);
-            showNotification('success', `${targetCount}개 코인 분석이 시작되었습니다`);
+            console.log(`🎯 우선순위 기반 배치 분석 시작: ${priorityCoins.length}개 코인`);
+            console.log('분석 대상:', priorityCoins.map(c => `${c.market}(${c.investment_priority})`));
+
+            await batchAnalyzeCoins(priorityCoins.length);
+            showNotification('success', `${priorityCoins.length}개 우선순위 코인 분석이 시작되었습니다`);
 
         } catch (error) {
             console.error('배치 분석 실패:', error);
             showNotification('error', error.message || '배치 분석 중 오류가 발생했습니다', 5000);
 
-            // ✅ 에러 시 상태 초기화
+            // 에러 시 상태 초기화
             setBatchAnalysisStarted(false);
             setBatchProgress(0);
             setBatchTargetCount(0);
@@ -181,48 +206,29 @@ export default function CoinManagement() {
         }
     };
 
-    // 검색 및 필터링 로직
+    // 검색 및 필터링 로직 (기존과 동일)
     const getFilteredCoins = () => {
         let filtered = availableCoins;
 
-        // 실제 업비트 API 키값으로 검색 수정
         if (searchTerm) {
             const term = searchTerm.toLowerCase().trim();
             filtered = filtered.filter(coin => {
-                // 한국어 이름 검색
-                if (coin.korean_name && coin.korean_name.includes(searchTerm)) {
-                    return true;
-                }
-
-                // 영문 이름 검색  
-                if (coin.english_name && coin.english_name.toLowerCase().includes(term)) {
-                    return true;
-                }
-
-                // 마켓 코드 검색 (KRW-BTC)
-                if (coin.market && coin.market.toLowerCase().includes(term)) {
-                    return true;
-                }
-
-                // 심볼 검색 (BTC)
+                if (coin.korean_name && coin.korean_name.includes(searchTerm)) return true;
+                if (coin.english_name && coin.english_name.toLowerCase().includes(term)) return true;
+                if (coin.market && coin.market.toLowerCase().includes(term)) return true;
                 if (coin.market) {
                     const symbol = coin.market.replace('KRW-', '');
-                    if (symbol.toLowerCase().includes(term)) {
-                        return true;
-                    }
+                    if (symbol.toLowerCase().includes(term)) return true;
                 }
-
                 return false;
             });
         }
 
-        // 가격 범위 필터링 수정
+        // 필터 로직 (기존과 동일)
         if (filters.minPrice && filters.minPrice !== '') {
             try {
                 const minPrice = parseFloat(filters.minPrice);
-                filtered = filtered.filter(coin =>
-                    coin.current_price && coin.current_price >= minPrice
-                );
+                filtered = filtered.filter(coin => coin.current_price && coin.current_price >= minPrice);
             } catch (e) {
                 console.warn('Invalid minPrice filter:', filters.minPrice);
             }
@@ -231,72 +237,48 @@ export default function CoinManagement() {
         if (filters.maxPrice && filters.maxPrice !== '') {
             try {
                 const maxPrice = parseFloat(filters.maxPrice);
-                filtered = filtered.filter(coin =>
-                    coin.current_price && coin.current_price <= maxPrice
-                );
+                filtered = filtered.filter(coin => coin.current_price && coin.current_price <= maxPrice);
             } catch (e) {
                 console.warn('Invalid maxPrice filter:', filters.maxPrice);
             }
         }
 
-        // 24시간 변화율 필터링 수정
         if (filters.changeFilter && filters.changeFilter !== 'all') {
             switch (filters.changeFilter) {
                 case 'positive':
-                    filtered = filtered.filter(coin =>
-                        coin.change_rate && coin.change_rate > 0
-                    );
+                    filtered = filtered.filter(coin => coin.change_rate && coin.change_rate > 0);
                     break;
                 case 'negative':
-                    filtered = filtered.filter(coin =>
-                        coin.change_rate && coin.change_rate < 0
-                    );
+                    filtered = filtered.filter(coin => coin.change_rate && coin.change_rate < 0);
                     break;
                 case 'neutral':
-                    filtered = filtered.filter(coin =>
-                        coin.change_rate && Math.abs(coin.change_rate) <= 0.1
-                    );
+                    filtered = filtered.filter(coin => coin.change_rate && Math.abs(coin.change_rate) <= 0.1);
                     break;
                 case 'strong_up':
-                    filtered = filtered.filter(coin =>
-                        coin.change_rate && coin.change_rate >= 5
-                    );
+                    filtered = filtered.filter(coin => coin.change_rate && coin.change_rate >= 5);
                     break;
                 case 'strong_down':
-                    filtered = filtered.filter(coin =>
-                        coin.change_rate && coin.change_rate <= -5
-                    );
+                    filtered = filtered.filter(coin => coin.change_rate && coin.change_rate <= -5);
                     break;
             }
         }
 
-        // AI 점수 필터링 수정
         if (filters.scoreFilter && filters.scoreFilter !== 'all') {
             switch (filters.scoreFilter) {
                 case 'excellent':
-                    filtered = filtered.filter(coin =>
-                        coin.analysis?.score && coin.analysis.score >= 8
-                    );
+                    filtered = filtered.filter(coin => coin.analysis?.score && coin.analysis.score >= 8);
                     break;
                 case 'good':
-                    filtered = filtered.filter(coin =>
-                        coin.analysis?.score && coin.analysis.score >= 6 && coin.analysis.score < 8
-                    );
+                    filtered = filtered.filter(coin => coin.analysis?.score && coin.analysis.score >= 6 && coin.analysis.score < 8);
                     break;
                 case 'fair':
-                    filtered = filtered.filter(coin =>
-                        coin.analysis?.score && coin.analysis.score >= 4 && coin.analysis.score < 6
-                    );
+                    filtered = filtered.filter(coin => coin.analysis?.score && coin.analysis.score >= 4 && coin.analysis.score < 6);
                     break;
                 case 'poor':
-                    filtered = filtered.filter(coin =>
-                        coin.analysis?.score && coin.analysis.score < 4
-                    );
+                    filtered = filtered.filter(coin => coin.analysis?.score && coin.analysis.score < 4);
                     break;
                 case 'analyzing':
-                    filtered = filtered.filter(coin =>
-                        !coin.analysis?.score || coin.analysis.recommendation === 'ANALYZING'
-                    );
+                    filtered = filtered.filter(coin => !coin.analysis?.score || coin.analysis.recommendation === 'ANALYZING');
                     break;
             }
         }
@@ -304,11 +286,10 @@ export default function CoinManagement() {
         return filtered;
     };
 
-    // ✅ 수동 새로고침 (가격 + 분석 데이터 통합 업데이트)
+    // 수동 새로고침
     const handleManualRefresh = async () => {
         setRefreshing(true);
         try {
-            // refreshData는 기본 가격 데이터만, refreshPriceAndAnalysis는 가격 + 분석 통합
             await refreshPriceAndAnalysis();
             showNotification('success', '최신 데이터로 업데이트되었습니다');
             console.log('✅ 수동 새로고침 완료');
@@ -320,12 +301,10 @@ export default function CoinManagement() {
         }
     };
 
-    // ✅ 관심코인 카드에서 상세 분석으로 이동
     const handleCoinClick = (coin) => {
         navigate('/analysis', { state: { selectedCoin: coin.market } });
     };
 
-    // ✅ 전체 관심코인 분석 시작
     const handleAnalyzeClick = () => {
         if (selectedCoins.length === 0) {
             showNotification('error', '분석할 관심 코인이 없습니다', 3000);
@@ -334,11 +313,11 @@ export default function CoinManagement() {
         navigate('/analysis');
     };
 
-    // 로딩 상태
+    // ✅ 실제 로딩 프로그레스 사용
     if (isLoading && !availableCoins.length) {
         return (
             <div className="min-h-screen bg-crypto-neutral-50">
-                <LoadingCoinsState progress={75} />
+                <LoadingCoinsState progress={loadingProgress || 0} />
             </div>
         );
     }
@@ -362,7 +341,7 @@ export default function CoinManagement() {
                     <button
                         onClick={() => navigate('/analysis')}
                         className="flex items-center space-x-2 text-crypto-neutral-600 
-                     hover:text-crypto-neutral-900 transition-colors"
+                         hover:text-crypto-neutral-900 transition-colors"
                     >
                         <ArrowLeftIcon className="w-5 h-5" />
                         <span>코인 분석</span>
@@ -380,7 +359,7 @@ export default function CoinManagement() {
                             onClick={handleManualRefresh}
                             disabled={refreshing}
                             className="p-2 text-crypto-neutral-500 hover:text-crypto-neutral-700 
-                       disabled:opacity-50 transition-colors"
+                           disabled:opacity-50 transition-colors"
                             title="수동 새로고침 (가격 + 분석 데이터)"
                         >
                             <ArrowPathIcon className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
@@ -415,7 +394,7 @@ export default function CoinManagement() {
 
             {/* 메인 콘텐츠 */}
             <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-6">
-                {/* ✅ 자동 분석 진행 상황 표시 */}
+                {/* ✅ 개선된 배치 분석 진행 상황 표시 */}
                 {batchAnalysisStarted && batchTargetCount > 0 && (
                     <motion.div
                         initial={{ opacity: 0, y: -20 }}
@@ -427,10 +406,11 @@ export default function CoinManagement() {
                             <ArrowPathIcon className="w-5 h-5 text-purple-600 animate-spin" />
                             <div className="flex-1">
                                 <h3 className="font-semibold text-purple-900">
-                                    전체 코인 배치 분석 진행 중... ({batchProgress}%)
+                                    우선순위 기반 배치 분석 진행 중... ({batchProgress}%)
                                 </h3>
                                 <p className="text-sm text-purple-700 mt-1">
                                     {Math.round((batchProgress / 100) * batchTargetCount)}개 / {batchTargetCount}개 완료
+                                    (투자 우선순위 순으로 분석)
                                 </p>
                                 <div className="w-full bg-purple-200 rounded-full h-3 mt-2">
                                     <div
@@ -514,7 +494,7 @@ export default function CoinManagement() {
                                 onClick={handleBatchAnalysis}
                                 disabled={batchAnalyzing || isLoading || !isInitialized || availableCoins.length === 0}
                                 className={`bg-purple-600 text-white px-4 py-2 rounded-lg transition-colors
-               flex items-center space-x-2 ${(batchAnalyzing || isLoading || !isInitialized || availableCoins.length === 0)
+                               flex items-center space-x-2 ${(batchAnalyzing || isLoading || !isInitialized || availableCoins.length === 0)
                                         ? 'opacity-50 cursor-not-allowed bg-gray-400'
                                         : 'hover:bg-purple-700'
                                     }`}
@@ -537,11 +517,10 @@ export default function CoinManagement() {
                                 ) : (
                                     <>
                                         <ChartBarIcon className="w-4 h-4" />
-                                        <span>전체 분석 시작</span>
+                                        <span>우선순위 분석 시작</span>
                                     </>
                                 )}
                             </button>
-
 
                             <div className="text-sm text-crypto-neutral-500">
                                 마지막 업데이트: {availableCoins[0]?.last_updated
@@ -551,7 +530,7 @@ export default function CoinManagement() {
                         </div>
                     </div>
 
-                    {/* 검색 결과가 없을 때 UI */}
+                    {/* 검색 결과가 없을 때 UI (기존과 동일) */}
                     {filteredCoins.length === 0 && searchTerm ? (
                         <div className="text-center py-12">
                             <MagnifyingGlassIcon className="w-12 h-12 text-crypto-neutral-400 mx-auto mb-4" />
@@ -590,25 +569,32 @@ export default function CoinManagement() {
                                 onRemoveCoin={handleRemoveCoin}
                             />
 
-                            {/* 더보기 버튼 */}
+                            {/* ✅ 개선된 더보기 버튼 */}
                             {limit < filteredCoins.length && (
                                 <div className="text-center pt-6">
                                     <button
-                                        onClick={() => setLimit(limit + 20)}
+                                        onClick={() => setLimit(limit + 50)} // 20 → 50으로 증가
                                         className="px-6 py-3 bg-crypto-primary-50 text-crypto-primary-700 
                                                     rounded-lg hover:bg-crypto-primary-100 transition-colors
                                                     font-medium border border-crypto-primary-200"
                                     >
                                         더보기 ({filteredCoins.length - limit}개 더 있음)
                                     </button>
-
+                                    {/* ✅ 모두 보기 버튼 추가 */}
+                                    <button
+                                        onClick={() => setLimit(filteredCoins.length)}
+                                        className="ml-3 px-4 py-2 text-crypto-neutral-600 
+                                                   hover:text-crypto-neutral-800 underline"
+                                    >
+                                        모두 보기 ({filteredCoins.length}개)
+                                    </button>
                                 </div>
                             )}
                         </>
                     )}
                 </motion.div>
 
-                {/* API 최적화 안내 */}
+                {/* API 최적화 안내 (기존과 동일) */}
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -620,10 +606,10 @@ export default function CoinManagement() {
                         <div>
                             <h3 className="font-semibold text-blue-900 mb-2">스마트 분석 스케줄</h3>
                             <div className="text-sm text-blue-800 space-y-2">
-                                <p>• <strong>매일 오전 9시</strong>에 자동으로 모든 관심 코인 분석 업데이트</p>
+                                <p>• <strong>우선순위 기반 분석</strong>: 거래량과 투자 가치가 높은 코인 우선 분석</p>
+                                <p>• <strong>실시간 진행률</strong>: 분석 진행 상황을 실시간으로 확인 가능</p>
                                 <p>• <strong>수동 새로고침</strong>으로 언제든지 최신 데이터 확인 가능</p>
                                 <p>• API 호출 제한을 고려하여 효율적으로 데이터 관리</p>
-                                <p>• 분석 결과는 24시간 동안 캐시되어 빠른 조회 가능</p>
                             </div>
 
                             <div className="mt-4 flex items-center flex-wrap gap-4 text-sm text-blue-700">
@@ -644,7 +630,7 @@ export default function CoinManagement() {
                     </div>
                 </motion.div>
 
-                {/* 관심 코인 추가 안내 */}
+                {/* 관심 코인 추가 안내 (기존과 동일) */}
                 {selectedCoins.length === 0 && (
                     <motion.div
                         initial={{ opacity: 0, y: 20 }}
@@ -670,6 +656,6 @@ export default function CoinManagement() {
                     </motion.div>
                 )}
             </div>
-        </div >
+        </div>
     );
 }

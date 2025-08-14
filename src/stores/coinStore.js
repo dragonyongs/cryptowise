@@ -1,9 +1,9 @@
-// src/stores/coinStore.js
+// src/stores/coinStore.js - 완전 개선 버전
 
 import { create } from "zustand";
 import { persist, subscribeWithSelector } from "zustand/middleware";
 
-// API 호출 제한 및 캐싱 설정
+// === API 설정 및 캐싱 ===
 const API_CONFIG = {
   UPBIT_RATE_LIMIT: 600, // 10분당 600회
   COINGECKO_RATE_LIMIT: 50, // 1분당 50회 (무료 플랜)
@@ -18,6 +18,104 @@ const PLAN_LIMITS = {
   free: 5,
   premium: 50,
   enterprise: 200,
+};
+
+// ✅ 정렬 옵션 상수
+const SORT_OPTIONS = {
+  VOLUME: "volume_24h",
+  MARKET_CAP: "estimated_market_cap",
+  PRICE_CHANGE: "change_rate",
+  ALPHABETICAL: "korean_name",
+  ANALYSIS_SCORE: "analysis.score",
+  INVESTMENT_PRIORITY: "investment_priority",
+};
+
+// ✅ 스마트 정렬 함수들
+const calculateInvestmentPriority = (coin) => {
+  // 거래량 점수 (40% 가중치)
+  const volumeScore =
+    coin.volume_24h > 1000000000
+      ? 40 // 10억 이상: 최고 우선순위
+      : coin.volume_24h > 100000000
+        ? 30 // 1억 이상: 높은 우선순위
+        : coin.volume_24h > 10000000
+          ? 20 // 천만 이상: 중간 우선순위
+          : coin.volume_24h > 1000000
+            ? 10
+            : 0; // 백만 이상: 낮은 우선순위
+
+  // 시가총액 추정 점수 (30% 가중치)
+  const estimatedMarketCap = coin.current_price * 1000000; // 대략적 계산
+  const marketCapScore =
+    estimatedMarketCap > 1000000000000
+      ? 30 // 1조 이상
+      : estimatedMarketCap > 100000000000
+        ? 25 // 1000억 이상
+        : estimatedMarketCap > 10000000000
+          ? 20 // 100억 이상
+          : estimatedMarketCap > 1000000000
+            ? 15
+            : 10; // 10억 이상
+
+  // 변동성 점수 (20% 가중치) - 적정 변동성 선호
+  const changeRate = Math.abs(coin.change_rate);
+  const volatilityScore =
+    changeRate > 10
+      ? 5 // 너무 높은 변동성은 위험
+      : changeRate > 5
+        ? 20 // 적정 변동성: 최고 점수
+        : changeRate > 2
+          ? 15 // 중간 변동성
+          : changeRate > 1
+            ? 10
+            : 5; // 낮은 변동성
+
+  // AI 분석 점수 (10% 가중치)
+  const analysisScore = (coin.analysis?.score || 0) * 1;
+
+  return volumeScore + marketCapScore + volatilityScore + analysisScore;
+};
+
+const sortCoinsByPriority = (
+  coins,
+  sortBy = SORT_OPTIONS.INVESTMENT_PRIORITY,
+  direction = "desc"
+) => {
+  return [...coins].sort((a, b) => {
+    let aValue, bValue;
+
+    switch (sortBy) {
+      case SORT_OPTIONS.INVESTMENT_PRIORITY:
+        aValue = calculateInvestmentPriority(a);
+        bValue = calculateInvestmentPriority(b);
+        break;
+      case SORT_OPTIONS.VOLUME:
+        aValue = a.volume_24h || 0;
+        bValue = b.volume_24h || 0;
+        break;
+      case SORT_OPTIONS.MARKET_CAP:
+        aValue = (a.current_price || 0) * 1000000; // 추정 시가총액
+        bValue = (b.current_price || 0) * 1000000;
+        break;
+      case SORT_OPTIONS.PRICE_CHANGE:
+        aValue = Math.abs(a.change_rate || 0);
+        bValue = Math.abs(b.change_rate || 0);
+        break;
+      case SORT_OPTIONS.ANALYSIS_SCORE:
+        aValue = a.analysis?.score || 0;
+        bValue = b.analysis?.score || 0;
+        break;
+      case SORT_OPTIONS.ALPHABETICAL:
+        return direction === "asc"
+          ? (a.korean_name || "").localeCompare(b.korean_name || "")
+          : (b.korean_name || "").localeCompare(a.korean_name || "");
+      default:
+        aValue = a[sortBy] || 0;
+        bValue = b[sortBy] || 0;
+    }
+
+    return direction === "asc" ? aValue - bValue : bValue - aValue;
+  });
 };
 
 // API 호출 레이트 리미터 클래스
@@ -43,25 +141,54 @@ class RateLimiter {
   }
 }
 
-// 캐시 관리자
-class DataCache {
+// ✅ 스마트 캐시 관리자 (TTL 기반)
+class SmartDataCache {
   constructor() {
     this.cache = new Map();
     this.timestamps = new Map();
+    this.hitCount = new Map();
+    this.accessTime = new Map();
   }
 
-  set(key, value, duration = API_CONFIG.CACHE_DURATION) {
+  set(key, value, priority = "medium") {
+    const ttl = this.calculateTTL(key, priority);
     this.cache.set(key, value);
-    this.timestamps.set(key, Date.now() + duration);
+    this.timestamps.set(key, Date.now() + ttl);
+    this.hitCount.set(key, 0);
   }
 
   get(key) {
     if (this.isExpired(key)) {
-      this.cache.delete(key);
-      this.timestamps.delete(key);
+      this.delete(key);
       return null;
     }
+
+    // 히트 카운트 증가
+    const hits = this.hitCount.get(key) || 0;
+    this.hitCount.set(key, hits + 1);
+    this.accessTime.set(key, Date.now());
+
     return this.cache.get(key);
+  }
+
+  calculateTTL(key, priority) {
+    const baseTime = {
+      high: 5000, // 5초 - 관심 코인
+      medium: 30000, // 30초 - 일반 코인
+      low: 60000, // 1분 - 백그라운드 데이터
+    };
+
+    // 히트율에 따라 TTL 조정
+    const hitRate = this.getHitRate(key);
+    const multiplier = hitRate > 0.8 ? 2 : 1; // 자주 액세스되는 데이터는 캐시 시간 연장
+
+    return baseTime[priority] * multiplier;
+  }
+
+  getHitRate(key) {
+    const hits = this.hitCount.get(key) || 0;
+    const total = hits + 1;
+    return hits / total;
   }
 
   isExpired(key) {
@@ -69,24 +196,51 @@ class DataCache {
     return !expiry || Date.now() > expiry;
   }
 
+  delete(key) {
+    this.cache.delete(key);
+    this.timestamps.delete(key);
+    this.hitCount.delete(key);
+    this.accessTime.delete(key);
+  }
+
   clear() {
     this.cache.clear();
     this.timestamps.clear();
+    this.hitCount.clear();
+    this.accessTime.clear();
+  }
+
+  // 캐시 효율성 통계
+  getStats() {
+    const totalEntries = this.cache.size;
+    const totalHits = Array.from(this.hitCount.values()).reduce(
+      (sum, hits) => sum + hits,
+      0
+    );
+    const avgHits = totalEntries > 0 ? totalHits / totalEntries : 0;
+
+    return {
+      totalEntries,
+      totalHits,
+      avgHits,
+      cacheEfficiency:
+        totalHits > 0 ? (totalHits / (totalHits + totalEntries)) * 100 : 0,
+    };
   }
 }
 
 // 전역 인스턴스
 const upbitLimiter = new RateLimiter(API_CONFIG.UPBIT_RATE_LIMIT, 600000); // 10분
 const geckoLimiter = new RateLimiter(API_CONFIG.COINGECKO_RATE_LIMIT, 60000); // 1분
-const dataCache = new DataCache();
+const smartCache = new SmartDataCache();
 
-// API 서비스 클래스
+// ✅ 개선된 API 서비스 클래스
 class CoinDataService {
   static async fetchUpbitMarkets() {
     try {
       await upbitLimiter.canMakeRequest();
 
-      const cached = dataCache.get("upbit_markets");
+      const cached = smartCache.get("upbit_markets");
       if (cached) return cached;
 
       const response = await fetch("https://api.upbit.com/v1/market/all");
@@ -97,7 +251,7 @@ class CoinDataService {
         market.market.startsWith("KRW-")
       );
 
-      dataCache.set("upbit_markets", krwMarkets);
+      smartCache.set("upbit_markets", krwMarkets, "low");
       return krwMarkets;
     } catch (error) {
       console.error("Failed to fetch Upbit markets:", error);
@@ -105,23 +259,25 @@ class CoinDataService {
     }
   }
 
-  static async fetchPriceData(markets) {
+  static async fetchPriceData(markets, priority = "medium") {
     try {
       await upbitLimiter.canMakeRequest();
 
       const marketString = markets.join(",");
       const cacheKey = `prices_${marketString}`;
-      const cached = dataCache.get(cacheKey);
+
+      const cached = smartCache.get(cacheKey);
       if (cached) return cached;
 
       const response = await fetch(
         `https://api.upbit.com/v1/ticker?markets=${marketString}`
       );
+
       if (!response.ok)
         throw new Error(`Upbit Price API Error: ${response.status}`);
 
       const priceData = await response.json();
-      dataCache.set(cacheKey, priceData);
+      smartCache.set(cacheKey, priceData, priority);
       return priceData;
     } catch (error) {
       console.error("Failed to fetch price data:", error);
@@ -131,43 +287,31 @@ class CoinDataService {
 
   static async enrichWithAnalysis(coinData) {
     return coinData.map((coin) => {
-      // ✅ 거래량 기반 우선순위 점수 사전 계산
-      const volumeScore =
-        coin.volume_24h > 1000000000
-          ? 3 // 10억 이상: 높은 우선순위
-          : coin.volume_24h > 100000000
-            ? 2 // 1억 이상: 중간 우선순위
-            : coin.volume_24h > 10000000
-              ? 1
-              : 0; // 천만 이상: 낮은 우선순위
-
-      const changeScore =
-        Math.abs(coin.change_rate) > 5
-          ? 2 // 5% 이상 변동: 높은 관심
-          : Math.abs(coin.change_rate) > 2
-            ? 1
-            : 0; // 2% 이상 변동: 중간 관심
+      // ✅ 투자 우선순위 점수 사전 계산
+      const priority = calculateInvestmentPriority(coin);
 
       return {
         ...coin,
+        investment_priority: priority, // 정렬용 우선순위 점수
         analysis: {
           score: 0,
           recommendation: "ANALYZING",
           technical_score: 0,
           fundamental_score: 0,
           sentiment_score: 0,
-          priority: volumeScore + changeScore, // ✅ 분석 우선순위 점수
+          priority: Math.floor(priority / 10), // 분석 우선순위 (0-10)
         },
       };
     });
   }
 }
 
+// ✅ 메인 스토어 - 완전 개선 버전
 export const useCoinStore = create(
   subscribeWithSelector(
     persist(
       (set, get) => ({
-        // === 상태 ===
+        // === 기본 상태 ===
         selectedCoins: [],
         availableCoins: [],
         userPlan: "free",
@@ -177,6 +321,17 @@ export const useCoinStore = create(
         isInitialized: false,
         error: null,
         loadingProgress: 0,
+
+        // ✅ 정렬 상태 추가
+        sortBy: SORT_OPTIONS.INVESTMENT_PRIORITY,
+        sortDirection: "desc",
+        filterOptions: {
+          minVolume: 0,
+          maxVolume: null,
+          minChange: null,
+          maxChange: null,
+          onlyAnalyzed: false,
+        },
 
         // === Getters ===
         getSelectedCoin: (market) => {
@@ -206,43 +361,128 @@ export const useCoinStore = create(
           };
         },
 
-        // 분석결과를 포함하여 관심코인/전체코인 최신화
-        updateCoinPrices: async (priceDataArr) => {
+        // ✅ 필터링된 코인 목록 반환
+        getFilteredCoins: () => {
+          const state = get();
+          let filtered = [...state.availableCoins];
+
+          // 필터 적용
+          const { minVolume, maxVolume, minChange, maxChange, onlyAnalyzed } =
+            state.filterOptions;
+
+          if (minVolume > 0) {
+            filtered = filtered.filter((coin) => coin.volume_24h >= minVolume);
+          }
+          if (maxVolume) {
+            filtered = filtered.filter((coin) => coin.volume_24h <= maxVolume);
+          }
+          if (minChange !== null) {
+            filtered = filtered.filter((coin) => coin.change_rate >= minChange);
+          }
+          if (maxChange !== null) {
+            filtered = filtered.filter((coin) => coin.change_rate <= maxChange);
+          }
+          if (onlyAnalyzed) {
+            filtered = filtered.filter((coin) => coin.analysis?.score > 0);
+          }
+
+          // 정렬 적용
+          return sortCoinsByPriority(
+            filtered,
+            state.sortBy,
+            state.sortDirection
+          );
+        },
+
+        // ✅ 정렬 옵션 설정
+        setSortOption: (sortBy, direction = "desc") => {
+          set((state) => {
+            const sorted = sortCoinsByPriority(
+              state.availableCoins,
+              sortBy,
+              direction
+            );
+            return {
+              availableCoins: sorted,
+              selectedCoins: sortCoinsByPriority(
+                state.selectedCoins,
+                sortBy,
+                direction
+              ),
+              sortBy,
+              sortDirection: direction,
+              lastUpdated: new Date().toISOString(),
+            };
+          });
+        },
+
+        // ✅ 필터 옵션 설정
+        setFilterOptions: (newFilters) => {
           set((state) => ({
-            availableCoins: state.availableCoins.map((coin) => {
-              const price = priceDataArr.find((p) => p.market === coin.market);
-              return price
-                ? {
-                    ...coin,
-                    current_price: price.trade_price,
-                    change_rate: price.signed_change_rate * 100,
-                    change_price: price.signed_change_price,
-                    volume_24h: price.acc_trade_price_24h,
-                    last_updated: new Date().toISOString(),
-                  }
-                : coin;
-            }),
-            selectedCoins: state.selectedCoins.map((coin) => {
-              const price = priceDataArr.find((p) => p.market === coin.market);
-              return price
-                ? {
-                    ...coin,
-                    current_price: price.trade_price,
-                    change_rate: price.signed_change_rate * 100,
-                    change_price: price.signed_change_price,
-                    volume_24h: price.acc_trade_price_24h,
-                    last_updated: new Date().toISOString(),
-                  }
-                : coin;
-            }),
-            lastUpdated: new Date().toISOString(),
+            filterOptions: { ...state.filterOptions, ...newFilters },
           }));
+        },
+
+        // 가격 데이터 업데이트 (정렬 유지)
+        updateCoinPrices: async (priceDataArr) => {
+          set((state) => {
+            const updatedAvailable = state.availableCoins.map((coin) => {
+              const price = priceDataArr.find((p) => p.market === coin.market);
+              if (price) {
+                const updated = {
+                  ...coin,
+                  current_price: price.trade_price,
+                  change_rate: price.signed_change_rate * 100,
+                  change_price: price.signed_change_price,
+                  volume_24h: price.acc_trade_price_24h,
+                  last_updated: new Date().toISOString(),
+                };
+                // 투자 우선순위 재계산
+                updated.investment_priority =
+                  calculateInvestmentPriority(updated);
+                return updated;
+              }
+              return coin;
+            });
+
+            const updatedSelected = state.selectedCoins.map((coin) => {
+              const price = priceDataArr.find((p) => p.market === coin.market);
+              if (price) {
+                const updated = {
+                  ...coin,
+                  current_price: price.trade_price,
+                  change_rate: price.signed_change_rate * 100,
+                  change_price: price.signed_change_price,
+                  volume_24h: price.acc_trade_price_24h,
+                  last_updated: new Date().toISOString(),
+                };
+                updated.investment_priority =
+                  calculateInvestmentPriority(updated);
+                return updated;
+              }
+              return coin;
+            });
+
+            // ✅ 업데이트 후 정렬 유지
+            return {
+              availableCoins: sortCoinsByPriority(
+                updatedAvailable,
+                state.sortBy,
+                state.sortDirection
+              ),
+              selectedCoins: sortCoinsByPriority(
+                updatedSelected,
+                state.sortBy,
+                state.sortDirection
+              ),
+              lastUpdated: new Date().toISOString(),
+            };
+          });
         },
 
         // === Actions ===
         addCoin: async (market) => {
           const state = get();
-
           if (state.isSelected(market))
             return { success: false, message: "이미 추가됨" };
           if (state.selectedCoins.length >= state.maxCoins)
@@ -258,17 +498,24 @@ export const useCoinStore = create(
 
           // 코인 추가
           set((state) => ({
-            selectedCoins: [...state.selectedCoins, coinData],
+            selectedCoins: sortCoinsByPriority(
+              [...state.selectedCoins, coinData],
+              state.sortBy,
+              state.sortDirection
+            ),
             lastUpdated: new Date().toISOString(),
           }));
 
-          // ✅ 코인 추가 후 즉시 해당 코인 분석 실행
+          // ✅ 관심 코인 추가 후 즉시 분석 (고우선순위)
           setTimeout(async () => {
             try {
-              console.log(`🔍 ${market} 코인 추가 후 즉시 분석 시작`);
+              console.log(`🔍 ${market} 관심 코인 추가 - 고우선순위 분석 시작`);
 
-              // 최신 가격 데이터 반영
-              const priceData = await CoinDataService.fetchPriceData([market]);
+              // 최신 가격 데이터 반영 (고우선순위 캐싱)
+              const priceData = await CoinDataService.fetchPriceData(
+                [market],
+                "high"
+              );
               if (priceData.length > 0) {
                 get().updateCoinPrices(priceData);
               }
@@ -282,6 +529,7 @@ export const useCoinStore = create(
               const chartResponse = await fetch(
                 `https://api.upbit.com/v1/candles/days?market=${market}&count=100`
               );
+
               if (chartResponse.ok) {
                 const chartData = await chartResponse.json();
                 const closes = chartData.reverse().map((c) => c.trade_price);
@@ -289,13 +537,13 @@ export const useCoinStore = create(
 
                 if (closes.length > 14) {
                   await fetchIndicators(market, closes, volumes);
-                  console.log(`✅ ${market} 추가 후 분석 완료`);
+                  console.log(`✅ ${market} 관심 코인 고우선순위 분석 완료`);
                 }
               }
             } catch (error) {
-              console.error(`❌ ${market} 추가 후 분석 실패:`, error);
+              console.error(`❌ ${market} 관심 코인 분석 실패:`, error);
             }
-          }, 500); // 500ms 후 실행
+          }, 300); // 빠른 응답을 위해 300ms로 단축
 
           return { success: true, message: `${coinData.korean_name} 추가됨` };
         },
@@ -303,7 +551,6 @@ export const useCoinStore = create(
         removeCoin: (market) => {
           const state = get();
           const coin = state.getSelectedCoin(market);
-
           if (!coin) {
             return { success: false, message: "선택되지 않은 코인입니다." };
           }
@@ -323,10 +570,8 @@ export const useCoinStore = create(
 
         setUserPlan: (plan) => {
           const maxCoins = PLAN_LIMITS[plan] || PLAN_LIMITS.free;
-
           set((state) => {
             let selectedCoins = state.selectedCoins;
-
             if (selectedCoins.length > maxCoins) {
               selectedCoins = selectedCoins.slice(0, maxCoins);
             }
@@ -353,7 +598,7 @@ export const useCoinStore = create(
         setLoading: (loading) => set({ isLoading: loading }),
         setProgress: (progress) => set({ loadingProgress: progress }),
 
-        // === 데이터 초기화 ===
+        // === 데이터 초기화 (정렬 적용) ===
         initializeData: async () => {
           const state = get();
 
@@ -380,13 +625,17 @@ export const useCoinStore = create(
             set({ loadingProgress: 50 });
             const allMarkets = markets.map((m) => m.market);
             let allPrices = [];
+
             for (let i = 0; i < allMarkets.length; i += 100) {
               const batch = allMarkets.slice(i, i + 100);
-              const batchPrices = await CoinDataService.fetchPriceData(batch);
+              const batchPrices = await CoinDataService.fetchPriceData(
+                batch,
+                "medium"
+              );
               allPrices = allPrices.concat(batchPrices);
             }
 
-            // 3단계: 데이터 통합 (모든 마켓에 가격 반영)
+            // 3단계: 데이터 통합
             set({ loadingProgress: 75 });
             const combinedData = markets.map((market) => {
               const price = allPrices.find((p) => p.market === market.market);
@@ -412,13 +661,20 @@ export const useCoinStore = create(
               };
             });
 
-            // 4단계: 분석 데이터 추가 (이전과 동일)
+            // 4단계: 분석 데이터 추가 및 정렬
             set({ loadingProgress: 90 });
             const enrichedData =
               await CoinDataService.enrichWithAnalysis(combinedData);
 
+            // ✅ 초기 로드 시 투자 우선순위로 정렬
+            const sortedData = sortCoinsByPriority(
+              enrichedData,
+              SORT_OPTIONS.INVESTMENT_PRIORITY,
+              "desc"
+            );
+
             set({
-              availableCoins: enrichedData,
+              availableCoins: sortedData,
               isLoading: false,
               isInitialized: true,
               lastUpdated: new Date().toISOString(),
@@ -426,18 +682,16 @@ export const useCoinStore = create(
               error: null,
             });
 
-            // ✅ 5단계: 초기화 완료 후 기존 관심 코인들 자동 분석 실행
+            // ✅ 5단계: 기존 관심 코인들 자동 분석 실행
             const currentState = get();
             if (currentState.selectedCoins.length > 0) {
               console.log(
-                "🚀 초기 로드 완료, 기존 관심 코인 자동 분석 시작:",
+                "🚀 초기화 완료 - 관심 코인 고우선순위 분석 시작:",
                 currentState.selectedCoins.map((c) => c.market)
               );
 
-              // 분석 실행을 위해 외부 함수 호출 (비동기, 백그라운드)
               setTimeout(async () => {
                 try {
-                  // useRefreshPriceAndAnalysis 훅 로직을 직접 구현
                   const { useAnalysisStore } = await import(
                     "../components/features/analysis/state/analysisStore.js"
                   );
@@ -445,10 +699,10 @@ export const useCoinStore = create(
 
                   for (const coin of currentState.selectedCoins) {
                     try {
-                      // 차트 데이터 가져오기
                       const response = await fetch(
                         `https://api.upbit.com/v1/candles/days?market=${coin.market}&count=100`
                       );
+
                       if (response.ok) {
                         const data = await response.json();
                         const closes = data.reverse().map((c) => c.trade_price);
@@ -468,23 +722,22 @@ export const useCoinStore = create(
                 } catch (error) {
                   console.error("초기 관심 코인 분석 실패:", error);
                 }
-              }, 1000); // 1초 후 실행하여 UI 블로킹 방지
+              }, 1000);
             }
           } catch (error) {
             console.error("Data initialization failed:", error);
             set({
               error: error.message,
               isLoading: false,
-              isInitialized: true, // 실패해도 초기화 완료로 표시
+              isInitialized: true,
               loadingProgress: 0,
             });
           }
         },
 
-        // === 데이터 업데이트 ===
+        // === 데이터 업데이트 (정렬 유지) ===
         refreshData: async () => {
           const state = get();
-
           if (!state.isInitialized) {
             return get().initializeData();
           }
@@ -492,51 +745,37 @@ export const useCoinStore = create(
           set({ isLoading: true, error: null });
 
           try {
-            // 전체 코인과 관심 코인 모두 배치 처리로 업데이트
+            // 관심 코인 우선 업데이트 (고우선순위 캐싱)
+            if (state.selectedCoins.length > 0) {
+              const selectedMarkets = state.selectedCoins.map(
+                (coin) => coin.market
+              );
+              const selectedPrices = await CoinDataService.fetchPriceData(
+                selectedMarkets,
+                "high"
+              );
+              if (selectedPrices.length > 0) {
+                get().updateCoinPrices(selectedPrices);
+              }
+            }
+
+            // 전체 코인 배치 업데이트
             const allMarkets = state.availableCoins.map((coin) => coin.market);
             let allPrices = [];
 
-            // 100개씩 배치로 가격 데이터 가져오기
             for (let i = 0; i < allMarkets.length; i += 100) {
               const batch = allMarkets.slice(i, i + 100);
-              const batchPrices = await CoinDataService.fetchPriceData(batch);
+              const batchPrices = await CoinDataService.fetchPriceData(
+                batch,
+                "medium"
+              );
               allPrices = allPrices.concat(batchPrices);
             }
 
-            set((state) => ({
-              availableCoins: state.availableCoins.map((coin) => {
-                const updatedPrice = allPrices.find(
-                  (p) => p.market === coin.market
-                );
-                return updatedPrice
-                  ? {
-                      ...coin,
-                      current_price: updatedPrice.trade_price,
-                      change_rate: updatedPrice.signed_change_rate * 100,
-                      change_price: updatedPrice.signed_change_price,
-                      volume_24h: updatedPrice.acc_trade_price_24h,
-                      last_updated: new Date().toISOString(),
-                    }
-                  : coin;
-              }),
-              selectedCoins: state.selectedCoins.map((coin) => {
-                const updatedPrice = allPrices.find(
-                  (p) => p.market === coin.market
-                );
-                return updatedPrice
-                  ? {
-                      ...coin,
-                      current_price: updatedPrice.trade_price,
-                      change_rate: updatedPrice.signed_change_rate * 100,
-                      change_price: updatedPrice.signed_change_price,
-                      volume_24h: updatedPrice.acc_trade_price_24h,
-                      last_updated: new Date().toISOString(),
-                    }
-                  : coin;
-              }),
-              lastUpdated: new Date().toISOString(),
-              isLoading: false,
-            }));
+            // 가격 업데이트 및 정렬 유지
+            get().updateCoinPrices(allPrices);
+
+            set({ isLoading: false });
           } catch (error) {
             console.error("Data refresh failed:", error);
             set({
@@ -546,62 +785,60 @@ export const useCoinStore = create(
           }
         },
 
-        // === 분석 결과 ===
+        // === 분석 결과 업데이트 ===
         updateAnalysisResult: (market, analysisData) => {
-          set((state) => ({
-            selectedCoins: state.selectedCoins.map((coin) =>
-              coin.market === market
-                ? {
-                    ...coin,
-                    analysis: {
-                      ...coin.analysis,
-                      ...analysisData,
-                      last_updated: new Date().toISOString(),
-                    },
-                  }
-                : coin
-            ),
-            availableCoins: state.availableCoins.map((coin) =>
-              coin.market === market
-                ? {
-                    ...coin,
-                    analysis: {
-                      ...coin.analysis,
-                      ...analysisData,
-                      last_updated: new Date().toISOString(),
-                    },
-                  }
-                : coin
-            ),
-            lastUpdated: new Date().toISOString(),
-          }));
+          set((state) => {
+            const updateCoin = (coin) => {
+              if (coin.market === market) {
+                const updated = {
+                  ...coin,
+                  analysis: {
+                    ...coin.analysis,
+                    ...analysisData,
+                    last_updated: new Date().toISOString(),
+                  },
+                };
+                // 분석 점수 변경 시 우선순위 재계산
+                updated.investment_priority =
+                  calculateInvestmentPriority(updated);
+                return updated;
+              }
+              return coin;
+            };
 
-          console.log(`📊 ${market} 분석 결과 업데이트:`, analysisData);
+            const updatedSelected = state.selectedCoins.map(updateCoin);
+            const updatedAvailable = state.availableCoins.map(updateCoin);
+
+            return {
+              selectedCoins: sortCoinsByPriority(
+                updatedSelected,
+                state.sortBy,
+                state.sortDirection
+              ),
+              availableCoins: sortCoinsByPriority(
+                updatedAvailable,
+                state.sortBy,
+                state.sortDirection
+              ),
+              lastUpdated: new Date().toISOString(),
+            };
+          });
+
+          console.log(
+            `📊 ${market} 분석 결과 업데이트 및 재정렬:`,
+            analysisData
+          );
         },
 
-        // ✅ 전체 코인 배치 분석 함수 추가
-        batchAnalyzeCoins: async (limit = 10) => {
+        // ✅ 지능형 배치 분석 함수
+        batchAnalyzeCoins: async (limit = 15) => {
           const state = get();
 
-          // ✅ 초기화 완료 여부 체크
           if (!state.isInitialized) {
-            console.log("⚠️ 초기화가 완료되지 않음, 초기화 실행 후 분석 시작");
-
-            // 초기화 먼저 실행
+            console.log("⚠️ 초기화 중... 잠시 후 분석 시작");
             await get().initializeData();
-
-            // 초기화 후 최신 상태 다시 가져오기
-            const updatedState = get();
-            if (
-              !updatedState.isInitialized ||
-              updatedState.availableCoins.length === 0
-            ) {
-              console.error("❌ 초기화 실패 또는 데이터 없음");
-              return;
-            }
           }
 
-          // ✅ availableCoins 빈 배열 체크
           const currentState = get();
           if (currentState.isLoading) {
             console.log("⚠️ 이미 로딩 중, 배치 분석 스킵");
@@ -609,74 +846,91 @@ export const useCoinStore = create(
           }
 
           if (currentState.availableCoins.length === 0) {
-            console.error("❌ availableCoins가 비어있음, 초기화 문제");
+            console.error("❌ 코인 데이터 없음");
             return;
           }
 
           set({ isLoading: true });
 
           try {
-            // 분석되지 않은 코인들 우선 선택
-            const coinsToAnalyze = currentState.availableCoins
+            // ✅ 우선순위 기반 분석 대상 선택
+            const priorityCoins = currentState.availableCoins
               .filter(
-                (coin) => !coin.analysis?.score || coin.analysis.score === 0
+                (coin) =>
+                  // 아직 분석되지 않았거나 오래된 분석
+                  !coin.analysis?.score ||
+                  coin.analysis.score === 0 ||
+                  (coin.analysis.last_updated &&
+                    Date.now() -
+                      new Date(coin.analysis.last_updated).getTime() >
+                      3600000) // 1시간 이상 경과
               )
+              .sort((a, b) => b.investment_priority - a.investment_priority) // 투자 우선순위 높은 순
               .slice(0, limit);
 
             console.log(
-              `🔄 배치 분석 시작: ${coinsToAnalyze.length}개 코인 (전체 ${currentState.availableCoins.length}개 중)`
+              `🎯 지능형 배치 분석 시작: ${priorityCoins.length}개 우선순위 코인 선택`
             );
 
-            if (coinsToAnalyze.length === 0) {
-              console.log("✅ 모든 코인이 이미 분석됨");
+            if (priorityCoins.length === 0) {
+              console.log("✅ 모든 우선순위 코인 분석 완료");
               return;
             }
 
-            // ✅ 업비트 API 제한 준수 (분당 600회, 초당 10회)
-            const BATCH_DELAY = 1000; // 1초 간격
-            const API_DELAY = 100; // API 호출 간 0.1초 대기
+            // ✅ 업비트 API 제한 준수하며 병렬 처리 최적화
+            const CONCURRENT_LIMIT = 3; // 동시 처리 제한
+            const BATCH_DELAY = 800; // 배치 간 딜레이 단축
 
-            for (const coin of coinsToAnalyze) {
-              try {
-                await new Promise((resolve) => setTimeout(resolve, API_DELAY));
+            for (let i = 0; i < priorityCoins.length; i += CONCURRENT_LIMIT) {
+              const batch = priorityCoins.slice(i, i + CONCURRENT_LIMIT);
 
-                // 차트 데이터 가져오기
-                const response = await fetch(
-                  `https://api.upbit.com/v1/candles/days?market=${coin.market}&count=50`
-                );
-
-                if (response.ok) {
-                  const data = await response.json();
-                  const closes = data.reverse().map((c) => c.trade_price);
-                  const volumes = data.map((c) => c.candle_acc_trade_volume);
-
-                  if (closes.length > 14) {
-                    // 분석 실행
-                    const { useAnalysisStore } = await import(
-                      "../components/features/analysis/state/analysisStore.js"
+              // 병렬 처리
+              await Promise.all(
+                batch.map(async (coin) => {
+                  try {
+                    const response = await fetch(
+                      `https://api.upbit.com/v1/candles/days?market=${coin.market}&count=50`
                     );
-                    await useAnalysisStore
-                      .getState()
-                      .fetchIndicators(coin.market, closes, volumes);
 
-                    console.log(`✅ ${coin.market} 배치 분석 완료`);
+                    if (response.ok) {
+                      const data = await response.json();
+                      const closes = data.reverse().map((c) => c.trade_price);
+                      const volumes = data.map(
+                        (c) => c.candle_acc_trade_volume
+                      );
 
-                    // API 부하 방지 딜레이
-                    await new Promise((resolve) =>
-                      setTimeout(resolve, BATCH_DELAY)
-                    );
+                      if (closes.length > 14) {
+                        const { useAnalysisStore } = await import(
+                          "../components/features/analysis/state/analysisStore.js"
+                        );
+                        await useAnalysisStore
+                          .getState()
+                          .fetchIndicators(coin.market, closes, volumes);
+
+                        console.log(
+                          `✅ ${coin.market} 우선순위 분석 완료 (우선순위: ${coin.investment_priority})`
+                        );
+                      }
+                    } else {
+                      console.warn(
+                        `⚠️ ${coin.market} 차트 데이터 조회 실패: ${response.status}`
+                      );
+                    }
+                  } catch (error) {
+                    console.error(`❌ ${coin.market} 분석 실패:`, error);
                   }
-                } else {
-                  console.warn(
-                    `⚠️ ${coin.market} 차트 데이터 조회 실패: ${response.status}`
-                  );
-                }
-              } catch (error) {
-                console.error(`❌ ${coin.market} 배치 분석 실패:`, error);
+                })
+              );
+
+              // 배치 간 딜레이
+              if (i + CONCURRENT_LIMIT < priorityCoins.length) {
+                await new Promise((resolve) =>
+                  setTimeout(resolve, BATCH_DELAY)
+                );
               }
             }
 
-            console.log("✅ 배치 분석 완료");
+            console.log("✅ 지능형 배치 분석 완료");
           } catch (error) {
             console.error("❌ 배치 분석 실패:", error);
           } finally {
@@ -686,7 +940,11 @@ export const useCoinStore = create(
 
         // === 캐시 관리 ===
         clearCache: () => {
-          dataCache.clear();
+          smartCache.clear();
+        },
+
+        getCacheStats: () => {
+          return smartCache.getStats();
         },
 
         // === 초기화 리셋 ===
@@ -699,10 +957,20 @@ export const useCoinStore = create(
             error: null,
             loadingProgress: 0,
             lastUpdated: null,
+            sortBy: SORT_OPTIONS.INVESTMENT_PRIORITY,
+            sortDirection: "desc",
+            filterOptions: {
+              minVolume: 0,
+              maxVolume: null,
+              minChange: null,
+              maxChange: null,
+              onlyAnalyzed: false,
+            },
           });
-          dataCache.clear();
+          smartCache.clear();
         },
       }),
+
       {
         name: "cryptowise-coin-store",
         partialize: (state) => ({
@@ -710,74 +978,86 @@ export const useCoinStore = create(
           userPlan: state.userPlan,
           maxCoins: state.maxCoins,
           lastUpdated: state.lastUpdated,
+          sortBy: state.sortBy,
+          sortDirection: state.sortDirection,
+          filterOptions: state.filterOptions,
         }),
-        version: 2, // 버전 업데이트로 기존 캐시 무효화
+        version: 3, // 버전 업데이트로 기존 캐시 무효화
       }
     )
   )
 );
 
-// 개발 환경 로깅
+// 개발 환경 로깅 및 모니터링
 if (process.env.NODE_ENV === "development") {
   let lastSelectedCoinsLog = 0;
   let lastLoadingLog = 0;
-  const LOG_THROTTLE_MS = 1000; // 1초마다 최대 1회 로그
+  const LOG_THROTTLE_MS = 1000;
 
-  // ✅ selectedCoins 변경 감지 - 디바운스 적용
+  // ✅ selectedCoins 변경 감지
   useCoinStore.subscribe(
     (state) => state.selectedCoins,
     (selectedCoins, previousSelectedCoins) => {
       const now = Date.now();
-
-      // 실제 의미있는 변경사항만 로깅
       const prevLength = previousSelectedCoins?.length || 0;
       const currLength = selectedCoins.length;
 
-      // 길이 변경이 있거나 1초 이상 경과한 경우만 로그
       if (
         prevLength !== currLength &&
         now - lastSelectedCoinsLog > LOG_THROTTLE_MS
       ) {
-        console.log("🪙 Selected coins changed:", {
+        console.log("🪙 관심 코인 변경:", {
           action: currLength > prevLength ? "ADDED" : "REMOVED",
           previous: prevLength,
           current: currLength,
-          coins: selectedCoins.map((c) => c.symbol),
+          coins: selectedCoins.map(
+            (c) => `${c.symbol}(${c.investment_priority})`
+          ),
         });
         lastSelectedCoinsLog = now;
       }
     }
   );
 
-  // ✅ isLoading 변경 감지 - 상태 전환만 로깅
+  // ✅ isLoading 변경 감지
   let lastLoadingState = null;
   useCoinStore.subscribe(
     (state) => state.isLoading,
     (isLoading) => {
       const now = Date.now();
-
-      // 실제 상태가 변경된 경우만 로그 (같은 상태 반복 방지)
       if (lastLoadingState !== isLoading && now - lastLoadingLog > 200) {
-        console.log(`⏳ Loading ${isLoading ? "STARTED" : "FINISHED"}`);
+        console.log(`⏳ 로딩 ${isLoading ? "시작" : "완료"}`);
         lastLoadingState = isLoading;
         lastLoadingLog = now;
       }
     }
   );
 
-  // ✅ 추가: 분석 상태 모니터링 (선택적)
-  let analysisLogCount = 0;
+  // ✅ 정렬 상태 모니터링
   useCoinStore.subscribe(
-    (state) =>
-      state.selectedCoins.filter(
-        (coin) => coin.analysis?.score && coin.analysis.score > 0
-      ).length,
-    (analyzedCount) => {
-      if (analyzedCount > 0 && analysisLogCount < 5) {
-        // 최대 5회만 로그
-        console.log(`📊 Analysis completed: ${analyzedCount} coins analyzed`);
-        analysisLogCount++;
-      }
+    (state) => ({ sortBy: state.sortBy, sortDirection: state.sortDirection }),
+    ({ sortBy, sortDirection }) => {
+      console.log(`🔄 정렬 변경: ${sortBy} (${sortDirection})`);
     }
   );
+
+  // ✅ 캐시 효율성 모니터링
+  setInterval(() => {
+    const stats = smartCache.getStats();
+    if (stats.totalEntries > 0) {
+      console.log(`📊 캐시 통계:`, {
+        entries: stats.totalEntries,
+        hits: stats.totalHits,
+        efficiency: `${stats.cacheEfficiency.toFixed(1)}%`,
+      });
+    }
+  }, 60000); // 1분마다
+
+  // 글로벌 디버깅 함수
+  window.cryptoStore = {
+    getState: () => useCoinStore.getState(),
+    getCacheStats: () => smartCache.getStats(),
+    clearCache: () => smartCache.clear(),
+    sortOptions: SORT_OPTIONS,
+  };
 }
