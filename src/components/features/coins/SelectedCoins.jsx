@@ -107,42 +107,50 @@ const SelectedCoins = ({ onCoinClick, onAnalyzeClick }) => {
                             <div className="space-y-2">
                                 <div className="flex justify-between items-center">
                                     <span className="text-sm text-crypto-neutral-600">현재가</span>
-                                    <span className="font-medium">₩{formatCurrency(coin.current_price)}</span>
+                                    <span className="font-medium">
+                                        ₩{formatCurrency(coin.current_price || 0)}
+                                    </span>
                                 </div>
 
                                 <div className="flex justify-between items-center">
                                     <span className="text-sm text-crypto-neutral-600">변화율</span>
-                                    <span className={`font-medium flex items-center ${coin.change_rate >= 0 ? 'text-crypto-success-600' : 'text-crypto-danger-600'
+                                    <span className={`font-medium flex items-center ${(coin.change_rate || 0) >= 0 ? 'text-crypto-success-600' : 'text-crypto-danger-600'
                                         }`}>
-                                        {coin.change_rate >= 0 ? (
+                                        {(coin.change_rate || 0) >= 0 ? (
                                             <ArrowTrendingUpIcon className="w-3 h-3 mr-1" />
                                         ) : (
                                             <ArrowTrendingDownIcon className="w-3 h-3 mr-1" />
                                         )}
-                                        {Math.abs(coin.change_rate)}%
+                                        {Math.abs(coin.change_rate || 0).toFixed(2)}%
                                     </span>
                                 </div>
 
-                                {/* AI 분석 점수 */}
-                                {coin.analysis && (
-                                    <div className="flex justify-between items-center pt-2 border-t border-crypto-neutral-200">
-                                        <span className="text-sm text-crypto-neutral-600">AI 점수</span>
-                                        <div className="flex items-center space-x-2">
-                                            <span className={`font-medium ${coin.analysis.score >= 8 ? 'text-crypto-success-600' :
-                                                    coin.analysis.score >= 7 ? 'text-crypto-warning-600' : 'text-crypto-neutral-600'
-                                                }`}>
-                                                {coin.analysis.score}/10
-                                            </span>
-                                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${coin.analysis.recommendation === 'STRONG_BUY' ? 'bg-crypto-success-100 text-crypto-success-700' :
-                                                    coin.analysis.recommendation === 'BUY' ? 'bg-crypto-primary-100 text-crypto-primary-700' :
-                                                        'bg-crypto-neutral-100 text-crypto-neutral-700'
-                                                }`}>
-                                                {coin.analysis.recommendation === 'STRONG_BUY' ? '강매수' :
-                                                    coin.analysis.recommendation === 'BUY' ? '매수' : '보유'}
-                                            </span>
-                                        </div>
+                                {/* AI 분석 점수 - 개선된 렌더링 */}
+                                <div className="flex justify-between items-center pt-2 border-t border-crypto-neutral-200">
+                                    <span className="text-sm text-crypto-neutral-600">AI 점수</span>
+                                    <div className="flex items-center space-x-2">
+                                        <span className={`font-medium ${(coin.analysis?.score || 0) >= 8 ? 'text-crypto-success-600' :
+                                                (coin.analysis?.score || 0) >= 6 ? 'text-crypto-warning-600' : 'text-crypto-neutral-600'
+                                            }`}>
+                                            {(coin.analysis?.score || 0).toFixed(1)}/10
+                                        </span>
+                                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${coin.analysis?.recommendation === 'STRONG_BUY' ? 'bg-crypto-success-100 text-crypto-success-700' :
+                                                coin.analysis?.recommendation === 'BUY' ? 'bg-crypto-primary-100 text-crypto-primary-700' :
+                                                    'bg-crypto-neutral-100 text-crypto-neutral-700'
+                                            }`}>
+                                            {coin.analysis?.recommendation === 'STRONG_BUY' ? '강매수' :
+                                                coin.analysis?.recommendation === 'BUY' ? '매수' :
+                                                    coin.analysis?.recommendation === 'HOLD' ? '보유' :
+                                                        coin.analysis?.recommendation === 'SELL' ? '매도' : '분석중'}
+                                        </span>
                                     </div>
-                                )}
+                                </div>
+
+                                {/* 마지막 업데이트 시간 */}
+                                <div className="text-xs text-crypto-neutral-400 text-center pt-2">
+                                    마지막 업데이트: {coin.last_updated ?
+                                        new Date(coin.last_updated).toLocaleTimeString('ko-KR') : '알 수 없음'}
+                                </div>
                             </div>
                         </motion.div>
                     ))}

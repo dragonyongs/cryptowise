@@ -8,7 +8,9 @@ const CoinList = memo(({
     coins = null,
     showSelected = false,
     limit = null,
-    enableActions = true
+    enableActions = true,
+    onAddCoin,      // ✅ 추가
+    onRemoveCoin    // ✅ 추가
 }) => {
     const {
         availableCoins,
@@ -33,9 +35,10 @@ const CoinList = memo(({
     const coinsToShow = useMemo(() => {
         // 1. props로 전달된 coins가 있으면 우선 사용 (필터된 결과)
         if (coins && Array.isArray(coins)) {
-            return showSelected
+            const base = showSelected
                 ? coins.filter(coin => isSelected(coin.market))
                 : coins;
+            return limit ? base.slice(0, limit) : base;
         }
 
         // 2. props가 없으면 스토어에서 직접 가져오기
@@ -86,6 +89,8 @@ const CoinList = memo(({
                         coin={coin}
                         isSelected={isSelected(coin.market)}
                         showActions={enableActions && !showSelected}
+                        onAddCoin={onAddCoin}       // ✅ 전달
+                        onRemoveCoin={onRemoveCoin} // ✅ 전달
                     />
                 ))}
             </div>

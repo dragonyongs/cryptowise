@@ -446,7 +446,7 @@ export default function Dashboard() {
                                                         ) : (
                                                             <ArrowTrendingDownIcon className="w-3 h-3 mr-1" />
                                                         )}
-                                                        {Math.abs(coin.change_rate)}%
+                                                        {Math.abs(coin.change_rate).toFixed(2)}%
                                                     </div>
                                                 </div>
                                             </div>

@@ -2,25 +2,32 @@
 import React from 'react';
 import { Plus, Minus, TrendingUp, TrendingDown, Star, StarOff } from 'lucide-react';
 import { useCoinStore } from '../../../stores/coinStore';
-
+import { useRefreshPriceAndAnalysis } from '../../../hooks/useRefreshPriceAndAnalysis';
+import {
+    ClockIcon, CheckCircleIcon
+} from '@heroicons/react/24/outline';
 const CoinItem = ({ coin, isSelected = false, showActions = true }) => {
     const { addCoin, removeCoin, getRemainingSlots } = useCoinStore();
+    const { refreshPriceAndAnalysis } = useRefreshPriceAndAnalysis();
 
     const handleToggleSelection = async () => {
         if (isSelected) {
             const result = removeCoin(coin.market);
-            if (!result.success) {
-                // 에러 핸들링 (토스트 메시지 등)
-                console.error(result.message);
+            if (!result.success) console.error(result.message);
+            else {
+                // 필요시 가격/분석 갱신 호출
+                await refreshPriceAndAnalysis();
             }
         } else {
             const result = addCoin(coin.market);
-            if (!result.success) {
-                // 에러 핸들링 (토스트 메시지 등)
-                console.error(result.message);
+            if (!result.success) console.error(result.message);
+            else {
+                // 최신 가격/분석 데이터 API 호출 후 상태 반영
+                await refreshPriceAndAnalysis();
             }
         }
     };
+
 
     const formatPrice = (price) => {
         if (price >= 1000) {
@@ -82,12 +89,12 @@ const CoinItem = ({ coin, isSelected = false, showActions = true }) => {
                         <button
                             onClick={handleToggleSelection}
                             className={`
-                p-2 rounded-lg transition-colors duration-200
-                ${isSelected
+                                p-2 rounded-lg transition-colors duration-200
+                                ${isSelected
                                     ? 'bg-blue-500 text-white hover:bg-blue-600'
                                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                                 }
-              `}
+                             `}
                             disabled={!isSelected && getRemainingSlots() === 0}
                         >
                             {isSelected ? (
@@ -109,19 +116,19 @@ const CoinItem = ({ coin, isSelected = false, showActions = true }) => {
                                 ₩{formatPrice(coin.current_price)}
                             </span>
                             <div className={`
-                flex items-center space-x-1 px-2 py-1 rounded-full text-sm
-                ${coin.change_rate >= 0
+                                flex items-center space-x-1 px-2 py-1 rounded-full text-sm
+                                ${coin.change_rate >= 0
                                     ? 'text-red-600 bg-red-50'
                                     : 'text-blue-600 bg-blue-50'
                                 }
-              `}>
+                            `}>
                                 {coin.change_rate >= 0 ? (
                                     <TrendingUp className="w-4 h-4" />
                                 ) : (
                                     <TrendingDown className="w-4 h-4" />
                                 )}
                                 <span>
-                                    {coin.change_rate >= 0 ? '+' : ''}{coin.change_rate.toFixed(2)}%
+                                    {coin.change_rate >= 0 ? '+' : ''}{coin.change_rate?.toFixed(2) || '0.00'}%
                                 </span>
                             </div>
                         </div>
@@ -145,43 +152,91 @@ const CoinItem = ({ coin, isSelected = false, showActions = true }) => {
                         <div className="flex items-center justify-between">
                             <span className="text-sm text-gray-600">AI 분석 점수</span>
                             <div className="flex items-center space-x-2">
-                                <span className={`font-bold ${getScoreColor(coin.analysis.score)}`}>
-                                    {coin.analysis.score}/10
-                                </span>
+                                {/* ✅ 분석 상태 아이콘 */}
+                                {coin.analysis.score > 0 ? (
+                                    <CheckCircleIcon className="w-4 h-4 text-green-500" />
+                                ) : (
+                                    <ClockIcon className="w-4 h-4 text-yellow-500 animate-pulse" />
+                                )}
+                                <div className={`font-bold ${getScoreColor(coin.analysis.score || 0)}`}>
+                                    {coin.analysis?.score !== undefined && coin.analysis.score > 0
+                                        ? `${coin.analysis.score.toFixed(1)}/10`
+                                        : "0.0/10"}
+                                </div>
                                 <span className={`
-                  px-2 py-1 rounded-full text-xs font-medium
-                  ${getRecommendationColor(coin.analysis.recommendation)}
-                `}>
-                                    {coin.analysis.recommendation === 'STRONG_BUY' && '강력매수'}
-                                    {coin.analysis.recommendation === 'BUY' && '매수'}
-                                    {coin.analysis.recommendation === 'HOLD' && '보유'}
-                                    {coin.analysis.recommendation === 'SELL' && '매도'}
-                                    {coin.analysis.recommendation === 'ANALYZING' && '분석중'}
+                                    px-2 py-1 rounded-full text-xs font-medium
+                                    ${getRecommendationColor(coin.analysis.recommendation || 'ANALYZING')}
+                                `}>
+                                    {(() => {
+                                        switch (coin.analysis.recommendation) {
+                                            case 'STRONG_BUY': return '강력매수';
+                                            case 'BUY': return '매수';
+                                            case 'HOLD': return '보유';
+                                            case 'SELL': return '매도';
+                                            case 'WEAK_SELL': return '약매도';
+                                            default: return '분석전';
+                                        }
+                                    })()}
                                 </span>
                             </div>
                         </div>
 
-                        {/* 세부 점수 */}
+                        {/* 세부 점수 - 안전한 렌더링 */}
                         <div className="grid grid-cols-3 gap-2 text-xs">
                             <div className="text-center p-2 bg-gray-50 rounded">
                                 <div className="font-medium text-gray-900">
-                                    {coin.analysis.technical_score.toFixed(1)}
+                                    {(coin.analysis.technical_score || 0).toFixed(1)}
                                 </div>
                                 <div className="text-gray-500">기술</div>
                             </div>
                             <div className="text-center p-2 bg-gray-50 rounded">
                                 <div className="font-medium text-gray-900">
-                                    {coin.analysis.fundamental_score.toFixed(1)}
+                                    {(coin.analysis.fundamental_score || 0).toFixed(1)}
                                 </div>
                                 <div className="text-gray-500">펀더멘탈</div>
                             </div>
                             <div className="text-center p-2 bg-gray-50 rounded">
                                 <div className="font-medium text-gray-900">
-                                    {coin.analysis.sentiment_score.toFixed(1)}
+                                    {(coin.analysis.sentiment_score || 0).toFixed(1)}
                                 </div>
                                 <div className="text-gray-500">심리</div>
                             </div>
                         </div>
+
+                        {/* 분석 상태 및 마지막 업데이트 */}
+                        <div className="flex justify-between items-center text-xs text-gray-400 pt-1">
+                            <span>
+                                {coin.analysis.last_analyzed
+                                    ? `분석: ${new Date(coin.analysis.last_analyzed).toLocaleTimeString('ko-KR')}`
+                                    : '분석 대기중'}
+                            </span>
+                            {coin.analysis.signals && coin.analysis.signals.length > 0 && (
+                                <span className="text-blue-600">
+                                    신호 {coin.analysis.signals.length}개
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {process.env.NODE_ENV === 'development' && (
+                    <div className="mt-2 pt-2 border-t border-gray-200">
+                        <button
+                            onClick={async () => {
+                                console.log('🧪 분석 테스트 실행:', coin.market);
+                                const { useAnalysisStore } = await import('../../../components/features/analysis/state/analysisStore');
+                                const { fetchIndicators } = useAnalysisStore.getState();
+
+                                // 임시 가격 데이터로 테스트
+                                const mockPrices = Array.from({ length: 50 }, (_, i) =>
+                                    coin.current_price * (1 + Math.sin(i * 0.1) * 0.02)
+                                );
+                                await fetchIndicators(coin.market, mockPrices, []);
+                            }}
+                            className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded"
+                        >
+                            🧪 분석 테스트
+                        </button>
                     </div>
                 )}
 
