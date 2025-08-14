@@ -139,3 +139,58 @@
     transform: scale(0.98);
   }
 }
+
+/* src/index.css 또는 globals.css에 추가 */
+
+/* 필터 패널이 다른 요소를 덮지 않도록 z-index 설정 */
+.crypto-filter-panel {
+  position: relative;
+  z-index: 50;
+}
+
+/* select 드롭다운이 겹치지 않도록 설정 */
+.crypto-filter-select {
+  position: relative;
+  z-index: 60;
+}
+
+.crypto-filter-select:focus {
+  z-index: 70;
+}
+
+/* 모달이나 드롭다운 오버레이 */
+.crypto-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.1);
+  z-index: 40;
+}
+
+/* 필터 패널 애니메이션 */
+.crypto-filter-panel-enter {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+.crypto-filter-panel-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 200ms,
+    transform 200ms;
+}
+
+.crypto-filter-panel-exit {
+  opacity: 1;
+}
+
+.crypto-filter-panel-exit-active {
+  opacity: 0;
+  transform: translateY(-10px);
+  transition:
+    opacity 200ms,
+    transform 200ms;
+}
