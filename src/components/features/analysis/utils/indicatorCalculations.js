@@ -1,3 +1,4 @@
+// src/components/features/analysis/utils/indicatorCalculations.js
 // RSI 계산 (종가 배열과 기간)
 export function calculateRSI(closes, period = 14) {
   let gains = 0,

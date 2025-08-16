@@ -1,4 +1,4 @@
-// src/stores/coinStore.js - 완전 개선 버전
+// src/stores/coinStore.js
 
 import { create } from "zustand";
 import { persist, subscribeWithSelector } from "zustand/middleware";
@@ -306,7 +306,7 @@ class CoinDataService {
   }
 }
 
-// ✅ 메인 스토어 - 완전 개선 버전
+// ✅ 메인 스토어
 export const useCoinStore = create(
   subscribeWithSelector(
     persist(
