@@ -16,5 +16,11 @@ export default defineConfig({
   server: {
     host: true, // 네트워크에서 접근 가능하도록 설정
     port: 5300,
+    proxy: {
+      "/api/rss-proxy": {
+        target: "http://localhost:3001", // Vercel dev server
+        changeOrigin: true,
+      },
+    },
   },
 });
