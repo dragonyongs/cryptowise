@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuthStore } from "../stores/authStore"; // 기존 auth store 사용
 import {
   ChartBarIcon,
   CpuChipIcon,
@@ -11,6 +13,8 @@ import {
 } from "@heroicons/react/24/outline";
 
 export default function LandingPage() {
+  const navigate = useNavigate();
+  const { user, signIn, loading: authLoading } = useAuthStore();
   const [loading, setLoading] = useState(false);
   const [activeFeature, setActiveFeature] = useState(0);
   const [marketData, setMarketData] = useState({
@@ -18,6 +22,13 @@ export default function LandingPage() {
     eth: 3456.78,
     trend: "+2.3%",
   });
+
+  // 이미 로그인된 경우 자동 리다이렉트
+  useEffect(() => {
+    if (user) {
+      navigate("/dashboard");
+    }
+  }, [user, navigate]);
 
   // 실시간 데이터 시뮬레이션
   useEffect(() => {
@@ -42,9 +53,25 @@ export default function LandingPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const signIn = () => {
-    setLoading(true);
-    setTimeout(() => setLoading(false), 2000);
+  // 로그인 처리 함수
+  const handleSignIn = async () => {
+    try {
+      setLoading(true);
+
+      // 테스트용: useAuthStore의 signIn이 있으면 사용, 없으면 시뮬레이션
+      if (signIn && typeof signIn === "function") {
+        await signIn();
+      } else {
+        // 테스트용 로그인 시뮬레이션
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        // 시뮬레이션 후 직접 리다이렉트
+        navigate("/dashboard");
+      }
+    } catch (error) {
+      console.error("로그인 실패:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const features = [
@@ -82,6 +109,8 @@ export default function LandingPage() {
     "모바일 알림",
     "전문가 지원",
   ];
+
+  const isLoading = loading || authLoading;
 
   return (
     <div className="min-h-screen bg-gray-50 relative overflow-hidden">
@@ -126,10 +155,11 @@ export default function LandingPage() {
               About
             </a>
             <button
-              onClick={signIn}
-              className="bg-slate-900 text-white px-4 py-2 rounded-lg font-medium hover:bg-slate-800 transition-colors"
+              onClick={handleSignIn}
+              disabled={isLoading}
+              className="bg-slate-900 text-white px-4 py-2 rounded-lg font-medium hover:bg-slate-800 transition-colors disabled:opacity-50"
             >
-              Sign In
+              {isLoading ? "로그인 중..." : "Sign In"}
             </button>
           </div>
         </div>
@@ -184,11 +214,11 @@ export default function LandingPage() {
               {/* CTA 버튼들 */}
               <div className="flex flex-col sm:flex-row gap-4 mb-8">
                 <button
-                  onClick={signIn}
-                  disabled={loading}
+                  onClick={handleSignIn}
+                  disabled={isLoading}
                   className="flex items-center justify-center space-x-3 bg-slate-900 text-white py-4 px-8 rounded-xl font-semibold hover:bg-slate-800 transition-all shadow-lg disabled:opacity-50"
                 >
-                  {loading ? (
+                  {isLoading ? (
                     <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white" />
                   ) : (
                     <>
