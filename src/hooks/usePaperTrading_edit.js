@@ -27,17 +27,6 @@ export const usePaperTrading = (userId = "demo-user") => {
   });
   const [debugMode, setDebugMode] = useState(false);
 
-  // ✅ 새로 추가: 매매 조건 설정 상태
-  const [tradingSettings, setTradingSettings] = useState({
-    buyThreshold: -1.0, // -1% 하락시 매수
-    sellThreshold: 0.8, // 0.8% 상승시 매도
-    rsiOversold: 30,
-    rsiOverbought: 70,
-    volumeThreshold: 1.5,
-    minScore: 7.5,
-    strategy: "balanced",
-  });
-
   // Refs
   const selectedCoinsRef = useRef(selectedCoins);
   const tradingModeRef = useRef(tradingMode);
@@ -46,7 +35,6 @@ export const usePaperTrading = (userId = "demo-user") => {
   const lastLogTimeRef = useRef(new Map());
   const logIdRef = useRef(0);
   const recentMessagesRef = useRef(new Map());
-  const tradingSettingsRef = useRef(tradingSettings);
 
   // -------------------------
   // 전역 초기화
@@ -75,10 +63,6 @@ export const usePaperTrading = (userId = "demo-user") => {
     isActiveRef.current = isActive;
   }, [isActive]);
 
-  useEffect(() => {
-    tradingSettingsRef.current = tradingSettings;
-  }, [tradingSettings]);
-
   // -------------------------
   // addLog: 중복 방지
   // -------------------------
@@ -90,10 +74,11 @@ export const usePaperTrading = (userId = "demo-user") => {
       if (now - lastMsgTime < dedupeWindowMs) {
         return;
       }
-
       recentMessagesRef.current.set(msg, now);
+
       logIdRef.current += 1;
       const id = `${now}_${logIdRef.current}`;
+
       const logKey = `${msg}_${type}`;
       const isDev = debugMode || process.env.NODE_ENV === "development";
       if (!isDev) {
@@ -131,18 +116,17 @@ export const usePaperTrading = (userId = "demo-user") => {
   }, [addLog]);
 
   // -------------------------
-  // ✅ 설정 기반 신호 생성 (하드코딩 제거)
+  // ✅ 더 완화된 신호 생성 (테스트용)
   // -------------------------
-  const generateConfigurableSignal = useCallback(
+  const generateTestSignal = useCallback(
     (data, coinInfo) => {
       try {
         const price = data.trade_price;
         const symbol = data.code.replace("KRW-", "");
         const changePercent = (data.signed_change_rate || 0) * 100;
-        const settings = tradingSettingsRef.current;
 
         addLog(
-          `🎯 ${symbol} 분석: 가격=${price.toLocaleString()}원, 변동률=${changePercent.toFixed(2)}%, 기준(매수<${settings.buyThreshold}%, 매도>${settings.sellThreshold}%)`,
+          `🎯 ${symbol} 간단분석: 가격=${price.toLocaleString()}원, 변동률=${changePercent.toFixed(2)}%`,
           "info"
         );
 
@@ -161,48 +145,31 @@ export const usePaperTrading = (userId = "demo-user") => {
         let signalType = null;
         let score = 0;
 
-        // ✅ 설정 기반 매수/매도 조건
-        if (changePercent <= settings.buyThreshold) {
+        // ✅ 매수/매도 조건 대폭 완화 (테스트용)
+        if (changePercent < -0.5) {
+          // -2% → -0.5%로 완화
           signalType = "BUY";
-          score = Math.min(8 + Math.abs(changePercent) * 0.5, 10);
+          score = 8 + Math.random() * 1.5;
           addLog(
-            `🟢 ${symbol} 매수 신호! 하락률: ${changePercent.toFixed(2)}% (기준: ${settings.buyThreshold}% 이하)`,
+            `🟢 ${symbol} 매수 신호! 하락률: ${changePercent.toFixed(2)}%`,
             "success"
           );
-        } else if (changePercent >= settings.sellThreshold) {
+        } else if (changePercent > 0.5) {
+          // 3% → 0.5%로 완화
           signalType = "SELL";
-          score = Math.min(8 + changePercent * 0.3, 10);
+          score = 8 + Math.random() * 1.0;
           addLog(
-            `🔴 ${symbol} 매도 신호! 상승률: ${changePercent.toFixed(2)}% (기준: ${settings.sellThreshold}% 이상)`,
+            `🔴 ${symbol} 매도 신호! 상승률: ${changePercent.toFixed(2)}%`,
             "success"
           );
         } else {
           addLog(
-            `ℹ️ ${symbol} 신호 없음 (변동률 ${changePercent.toFixed(2)}% - 범위: 매수<${settings.buyThreshold}%, 매도>${settings.sellThreshold}%)`,
+            `ℹ️ ${symbol} 신호 없음 (변동률 ${changePercent.toFixed(2)}% - 기준: 매수<-0.5%, 매도>+0.5%)`,
             "info"
           );
         }
 
         if (!signalType) return null;
-
-        // 추가 검증: RSI 기반 필터링 (가상의 RSI 계산)
-        const simpleRSI = 50 + changePercent * 2; // 간단한 RSI 근사값
-
-        if (signalType === "BUY" && simpleRSI > settings.rsiOversold + 20) {
-          addLog(
-            `⚠️ ${symbol} 매수 신호 RSI 필터링: ${simpleRSI.toFixed(1)} > ${settings.rsiOversold + 20}`,
-            "warning"
-          );
-          return null;
-        }
-
-        if (signalType === "SELL" && simpleRSI < settings.rsiOverbought - 20) {
-          addLog(
-            `⚠️ ${symbol} 매도 신호 RSI 필터링: ${simpleRSI.toFixed(1)} < ${settings.rsiOverbought - 20}`,
-            "warning"
-          );
-          return null;
-        }
 
         monitoringStatsRef.current.signalsGenerated =
           (monitoringStatsRef.current.signalsGenerated || 0) + 1;
@@ -216,10 +183,9 @@ export const usePaperTrading = (userId = "demo-user") => {
           type: signalType,
           price,
           totalScore: score,
-          reason: `${coinInfo?.korean_name || symbol} ${signalType} 신호 (변동률: ${changePercent.toFixed(2)}%, 설정: ${settings.strategy})`,
+          reason: `${coinInfo?.korean_name || symbol} ${signalType} 신호 (${changePercent.toFixed(2)}%)`,
           timestamp: new Date(),
           changePercent,
-          settings: { ...settings },
         };
       } catch (error) {
         addLog(`❌ ${data.code} 신호 생성 오류: ${error.message}`, "error");
@@ -241,6 +207,7 @@ export const usePaperTrading = (userId = "demo-user") => {
       }
 
       const symbol = data.code.replace("KRW-", "");
+
       monitoringStatsRef.current.dataReceived =
         (monitoringStatsRef.current.dataReceived || 0) + 1;
       setMonitoringStats((prev) => ({
@@ -270,6 +237,7 @@ export const usePaperTrading = (userId = "demo-user") => {
 
       let shouldTrade = false;
       let coinInfo = null;
+
       if (tradingModeRef.current === "selected") {
         coinInfo = selectedCoinsRef.current.find(
           (c) => c.symbol === symbol || c.market === `KRW-${symbol}`
@@ -284,11 +252,10 @@ export const usePaperTrading = (userId = "demo-user") => {
         return;
       }
 
-      // ✅ 설정 기반 신호 생성 및 거래 실행
-      const signal = generateConfigurableSignal(data, coinInfo);
-      const settings = tradingSettingsRef.current;
+      // ✅ 신호 생성 및 거래 실행
+      const signal = generateTestSignal(data, coinInfo);
 
-      if (signal && signal.totalScore >= settings.minScore) {
+      if (signal && signal.totalScore >= 7.5) {
         setLastSignal(signal); // ✅ 최근 신호 탭에 표시
 
         // ✅ 코인별 설정 (기본값 제공)
@@ -309,6 +276,7 @@ export const usePaperTrading = (userId = "demo-user") => {
 
         try {
           const result = await paperTradingEngine.executeSignal(signal, config);
+
           if (result?.executed) {
             monitoringStatsRef.current.tradesExecuted =
               (monitoringStatsRef.current.tradesExecuted || 0) + 1;
@@ -318,7 +286,7 @@ export const usePaperTrading = (userId = "demo-user") => {
             }));
 
             addLog(
-              `✅ ${signal.symbol} ${signal.type} 거래 실행! ${result.trade.amount?.toLocaleString()}원 (설정: ${settings.strategy})`,
+              `✅ ${signal.symbol} ${signal.type} 거래 실행! ${result.trade.amount?.toLocaleString()}원`,
               "success"
             );
 
@@ -334,7 +302,7 @@ export const usePaperTrading = (userId = "demo-user") => {
     },
     [
       addLog,
-      generateConfigurableSignal,
+      generateTestSignal,
       topCoins,
       updatePortfolio,
       portfolio,
@@ -349,9 +317,8 @@ export const usePaperTrading = (userId = "demo-user") => {
   useEffect(() => {
     if (!isActive) return;
     const id = setInterval(() => {
-      const settings = tradingSettingsRef.current;
       addLog(
-        `📊 [${tradingMode === "selected" ? "관심코인" : "전체코인"}] 수신:${monitoringStatsRef.current.dataReceived} 신호:${monitoringStatsRef.current.signalsGenerated} 거래:${monitoringStatsRef.current.tradesExecuted} (${settings.strategy} 전략)`,
+        `📊 [${tradingMode === "selected" ? "관심코인" : "전체코인"}] 수신:${monitoringStatsRef.current.dataReceived} 신호:${monitoringStatsRef.current.signalsGenerated} 거래:${monitoringStatsRef.current.tradesExecuted}`,
         "info"
       );
     }, 120000);
@@ -392,8 +359,7 @@ export const usePaperTrading = (userId = "demo-user") => {
   // -------------------------
   const startPaperTrading = useCallback(async () => {
     if (isActiveRef.current) return;
-    const settings = tradingSettingsRef.current;
-    addLog(`🚀 페이퍼 트레이딩 시작 (${settings.strategy} 전략)`, "success");
+    addLog("🚀 페이퍼 트레이딩 시작", "success");
 
     monitoringStatsRef.current = {
       dataReceived: 0,
@@ -404,19 +370,16 @@ export const usePaperTrading = (userId = "demo-user") => {
     setMonitoringStats({ ...monitoringStatsRef.current });
 
     let subscriptionList = [];
+
     if (tradingModeRef.current === "selected") {
       if (!selectedCoinsRef.current || selectedCoinsRef.current.length === 0) {
         addLog("❌ 관심등록된 코인이 없습니다", "error");
         return;
       }
-
       subscriptionList = selectedCoinsRef.current.map(
         (c) => c.market || `KRW-${c.symbol}`
       );
-      addLog(
-        `🎯 관심코인 ${subscriptionList.length}개 모니터링 (매수<${settings.buyThreshold}%, 매도>${settings.sellThreshold}%)`,
-        "info"
-      );
+      addLog(`🎯 관심코인 ${subscriptionList.length}개 모니터링`, "info");
     } else {
       const coins = await upbitMarketService.getInvestableCoins();
       const popular = coins
@@ -424,10 +387,7 @@ export const usePaperTrading = (userId = "demo-user") => {
         .slice(0, 20);
       setTopCoins(popular);
       subscriptionList = popular.map((c) => c.market);
-      addLog(
-        `🌍 전체코인 상위 ${subscriptionList.length}개 모니터링 (${settings.strategy} 전략)`,
-        "info"
-      );
+      addLog(`🌍 전체코인 상위 ${subscriptionList.length}개 모니터링`, "info");
     }
 
     const ws = new WebSocket("wss://api.upbit.com/websocket/v1");
@@ -538,8 +498,6 @@ export const usePaperTrading = (userId = "demo-user") => {
     tradingMode,
     setTradingMode,
     topCoins,
-    tradingSettings, // ✅ 새로 추가
-    setTradingSettings, // ✅ 새로 추가
     startPaperTrading,
     stopPaperTrading,
     toggleInterestCoin: (symbol) =>
