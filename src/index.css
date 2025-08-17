@@ -140,8 +140,6 @@
   }
 }
 
-/* src/index.css 또는 globals.css에 추가 */
-
 /* 필터 패널이 다른 요소를 덮지 않도록 z-index 설정 */
 .crypto-filter-panel {
   position: relative;

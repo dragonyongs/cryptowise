@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { usePaperTrading } from "../../../hooks/usePaperTrading";
 import { formatCurrency, formatPercent } from "../../../utils/formatters";
-import { paperTradingEngine } from "../../../services/testing/paperTradingEngine";
+import { ConnectionStatus } from "../../ui/ConnectionStatus";
 import TradingSettings from "./TradingSettings";
 import {
   PlayIcon,
@@ -53,7 +53,9 @@ const PaperTrading = () => {
   const {
     portfolio,
     isActive,
+    connectionStatus,
     isConnected,
+    reconnect,
     lastSignal,
     logs,
     monitoringStats,
@@ -135,6 +137,10 @@ const PaperTrading = () => {
               <p className="text-slate-600 text-sm sm:text-base">
                 가상 투자로 전략을 테스트해보세요 (초기자본: ₩1,840,000)
               </p>
+              <ConnectionStatus
+                connectionStatus={connectionStatus}
+                onReconnect={reconnect}
+              />
             </div>
 
             {/* ✅ 완전히 개선된 Controls Section */}

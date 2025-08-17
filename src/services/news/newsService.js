@@ -90,47 +90,48 @@ class NewsService {
     };
 
     this.lastFetch = new Map();
-    this.newsCache = new Map();
   }
 
   // ✅ RSS 피드 파싱 (CORS 문제 해결)
-  async fetchRSSFeed(url) {
+  async fetchRSSFeed(symbol) {
     try {
-      // Vercel API 엔드포인트를 통해 RSS 가져오기 (CORS 회피)
-      const response = await fetch(
-        `/api/rss-proxy?url=${encodeURIComponent(url)}`
-      );
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const apiUrl = `/api/news-analysis?symbol=${symbol}`;
 
-      const xmlText = await response.text();
-      const parser = new DOMParser();
-      const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+      console.log(`📰 ${symbol} 뉴스 분석 API 호출: ${apiUrl}`);
 
-      const items = xmlDoc.querySelectorAll("item");
-      const articles = [];
-
-      items.forEach((item, index) => {
-        if (index >= 20) return; // 최대 20개만
-
-        const title = item.querySelector("title")?.textContent || "";
-        const description =
-          item.querySelector("description")?.textContent || "";
-        const pubDate = item.querySelector("pubDate")?.textContent || "";
-        const link = item.querySelector("link")?.textContent || "";
-
-        articles.push({
-          title: this.cleanText(title),
-          description: this.cleanText(description),
-          pubDate: new Date(pubDate),
-          link,
-          source: url,
-        });
+      const response = await fetch(apiUrl, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
       });
 
-      return articles;
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} - ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      console.log(`✅ ${symbol} 뉴스 분석 완료:`, data);
+      return data;
     } catch (error) {
-      console.error(`RSS 피드 에러 (${url}):`, error.message);
-      return [];
+      console.error(`❌ ${symbol} 뉴스 API 호출 실패:`, error.message);
+
+      // 폴백 데이터 반환
+      return {
+        sentiment: "neutral",
+        score: 5.0,
+        strength: "neutral",
+        recentTrend: "neutral",
+        articles: [],
+        source: "client_fallback",
+        error: error.message,
+        cached: false,
+      };
     }
   }
 
@@ -145,41 +146,31 @@ class NewsService {
 
   // ✅ 코인별 뉴스 수집
   async collectCoinNews(symbol) {
-    const cacheKey = `news_${symbol}`;
-    const cached = cache.get(cacheKey);
-    if (cached) return cached;
+    try {
+      console.log(`📰 ${symbol} 뉴스 수집 시작...`);
 
-    const allNews = [];
-    const coinKeywords = this.getCoinKeywords(symbol);
+      // 직접 API 호출로 변경 (RSS 프록시 제거)
+      const newsData = await this.fetchRSSFeed(symbol);
 
-    // 모든 RSS 소스에서 뉴스 수집
-    for (const source of this.sources) {
-      try {
-        const articles = await this.fetchRSSFeed(source);
+      return {
+        articles: newsData.articles || [],
+        sentiment: newsData.sentiment || "neutral",
+        score: newsData.score || 5.0,
+        source: newsData.source || "api",
+        timestamp: Date.now(),
+      };
+    } catch (error) {
+      console.error(`❌ ${symbol} 뉴스 수집 에러:`, error.message);
 
-        // 코인 관련 뉴스만 필터링
-        const relevantArticles = articles.filter((article) => {
-          const text = `${article.title} ${article.description}`.toLowerCase();
-          return coinKeywords.some((keyword) =>
-            text.includes(keyword.toLowerCase())
-          );
-        });
-
-        allNews.push(...relevantArticles);
-      } catch (error) {
-        console.error(`뉴스 수집 에러 (${source}):`, error);
-      }
+      return {
+        articles: [],
+        sentiment: "neutral",
+        score: 5.0,
+        source: "error_fallback",
+        error: error.message,
+        timestamp: Date.now(),
+      };
     }
-
-    // 중복 제거 및 최신순 정렬
-    const uniqueNews = this.removeDuplicates(allNews)
-      .sort((a, b) => b.pubDate - a.pubDate)
-      .slice(0, 30); // 최대 30개
-
-    // 30분 캐시
-    cache.set(cacheKey, uniqueNews, 1800);
-
-    return uniqueNews;
   }
 
   // ✅ 코인별 키워드 반환
@@ -366,36 +357,110 @@ class NewsService {
   // ✅ 메인 API: 코인 뉴스 점수 반환
   async getNewsScore(symbol) {
     try {
-      console.log(`📰 ${symbol} 뉴스 분석 시작...`);
+      const cacheKey = `news_${symbol}`;
+      const cached = cache.get(cacheKey, 5 * 60);
 
-      const news = await this.collectCoinNews(symbol);
-      const sentiment = this.calculateSentimentScore(news);
+      if (cached) {
+        console.log(`📊 ${symbol} 뉴스 점수 (캐시): ${cached.score}/10`);
+        return { ...cached, cached: true };
+      }
+
+      // ✅ API 호출 전 로깅 추가
+      console.log(`🔄 ${symbol} 새로운 뉴스 데이터 수집 시작...`);
+
+      const newsData = await this.collectCoinNews(symbol);
+
+      // ✅ 수집된 데이터 검증
+      if (!newsData || newsData.articles?.length === 0) {
+        console.warn(`⚠️ ${symbol} 뉴스 데이터 없음 - 기본값 사용`);
+        return {
+          score: 5.0,
+          sentiment: "neutral",
+          strength: "neutral",
+          articles: [],
+          cached: false,
+          error: "No news data available",
+        };
+      }
+
+      // ✅ 실제 감정 분석 수행
+      const sentimentResult = this.calculateSentimentScore(newsData.articles);
+
+      const result = {
+        score: sentimentResult.score, // 실제 계산된 점수 사용
+        sentiment: sentimentResult.strength,
+        strength: sentimentResult.strength,
+        recentTrend: sentimentResult.recentTrend,
+        articles: sentimentResult.articles,
+        source: "live_analysis",
+        cached: false,
+        timestamp: Date.now(),
+      };
+
+      cache.set(cacheKey, result, 5 * 60);
 
       console.log(
-        `📊 ${symbol} 뉴스 점수: ${sentiment.score}/10 (${sentiment.strength}) - ${news.length}개 뉴스`
+        `📊 ${symbol} 뉴스 점수: ${result.score}/10 (${result.sentiment}) - ${result.articles.length}개 뉴스`
       );
-
-      return sentiment;
+      return result;
     } catch (error) {
-      console.error(`뉴스 점수 계산 에러 (${symbol}):`, error);
+      console.error(`❌ ${symbol} 뉴스 점수 계산 실패:`, error);
+      // 에러 시에만 기본값 반환
       return {
         score: 5.0,
-        positive: 0,
-        negative: 0,
-        neutral: 0,
-        total: 0,
+        sentiment: "neutral",
         strength: "neutral",
-        recentTrend: "neutral",
         error: error.message,
+        cached: false,
       };
     }
+  }
+
+  // ✅ 캐시 클리어 메서드 추가
+  clearCache() {
+    // 뉴스 관련 캐시만 삭제
+    const newsKeys = [];
+
+    // cache가 Map이라면
+    if (cache.cache && cache.cache instanceof Map) {
+      for (const key of cache.cache.keys()) {
+        if (key.startsWith("news_")) {
+          newsKeys.push(key);
+        }
+      }
+    }
+
+    newsKeys.forEach((key) => cache.delete && cache.delete(key));
+    console.log(`🔄 뉴스 캐시 ${newsKeys.length}개 클리어 완료`);
+  }
+
+  // ✅ 캐시 상태 확인 메서드
+  getCacheStatus() {
+    const entries = [];
+
+    if (cache.cache && cache.cache instanceof Map) {
+      for (const [key, value] of cache.cache.entries()) {
+        if (key.startsWith("news_")) {
+          const age = Math.floor(
+            (Date.now() - (value.timestamp || Date.now())) / 1000
+          );
+          entries.push({
+            key,
+            score: value.score || "N/A",
+            age: `${age}초 전`,
+            articles: value.articles?.length || 0,
+          });
+        }
+      }
+    }
+
+    return entries;
   }
 
   // ✅ 여러 코인 동시 분석
   async getBatchNewsScores(symbols) {
     const results = {};
 
-    // 동시 요청으로 성능 향상
     const promises = symbols.map(async (symbol) => {
       const score = await this.getNewsScore(symbol);
       return { symbol, score };
