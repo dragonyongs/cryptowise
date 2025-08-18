@@ -1,138 +1,103 @@
-// api/news-analysis.js
+// api/news-analysis.js - 동적 키워드 생성 & 확장성 개선
+
 import Parser from "rss-parser";
 
 const parser = new Parser({
   headers: {
-    "User-Agent": "CryptoWise/1.0 (https://cryptowise.com)",
+    "User-Agent": "CryptoWise/1.0",
     Accept: "application/rss+xml, text/xml, application/xml",
   },
 });
 
-// 메모리 캐시
+// ✅ 메모리 캐시
 const cache = new Map();
-const CACHE_DURATION = 5 * 60 * 1000; // 5분
-const coinInfoCache = new Map(); // 코인 정보 캐시
-const COIN_INFO_CACHE_DURATION = 30 * 60 * 1000; // 30분
+const CACHE_DURATION = 10 * 60 * 1000; // 10분
+const MAX_CACHE_SIZE = 50;
+const MAX_ARTICLES = 8;
 
-// ✅ 동적 코인 키워드 관리
-const STATIC_CRYPTO_KEYWORDS = {
-  // 주요 코인들 (정적 백업용)
-  BTC: ["bitcoin", "btc", "비트코인", "btc/usd", "bitcoin price"],
-  ETH: ["ethereum", "eth", "이더리움", "eth/usd", "ethereum price", "ether"],
-  XRP: ["ripple", "xrp", "리플", "xrp/usd", "ripple price"],
-  ADA: ["cardano", "ada", "카르다노", "ada/usd", "cardano price"],
-  SOL: ["solana", "sol", "솔라나", "sol/usd", "solana price"],
-  DOT: ["polkadot", "dot", "폴카닷", "dot/usd", "polkadot price"],
-  LINK: ["chainlink", "link", "체인링크", "link/usd", "chainlink price"],
-  MATIC: ["polygon", "matic", "폴리곤", "matic/usd", "polygon price"],
-  AVAX: ["avalanche", "avax", "아발란체", "avax/usd", "avalanche price"],
-  ALGO: ["algorand", "algo", "알고랜드", "algo/usd", "algorand price"],
-  // 한국 거래소 인기 코인들
-  DOGE: ["dogecoin", "doge", "도지코인", "doge/usd", "dogecoin price"],
-  SHIB: ["shiba inu", "shib", "시바이누", "shib/usd", "shiba price"],
-  ETC: ["ethereum classic", "etc", "이더리움클래식", "etc/usd"],
-  BCH: ["bitcoin cash", "bch", "비트코인캐시", "bch/usd"],
-  LTC: ["litecoin", "ltc", "라이트코인", "ltc/usd", "litecoin price"],
+// ✅ API 호출 제한
+const apiCallTracker = new Map();
+const MAX_CALLS_PER_MINUTE = 15; // 더 보수적으로
+
+// ✅ 기본 키워드 매핑 (핵심만)
+const CORE_KEYWORDS = {
+  BTC: ["bitcoin", "btc", "비트코인"],
+  ETH: ["ethereum", "eth", "이더리움", "ether"],
+  XRP: ["ripple", "xrp", "리플"],
+  ADA: ["cardano", "ada", "카르다노"],
+  SOL: ["solana", "sol", "솔라나"],
+  DOT: ["polkadot", "dot", "폴카닷"],
+  LINK: ["chainlink", "link", "체인링크"],
+  MATIC: ["polygon", "matic", "폴리곤"],
+  AVAX: ["avalanche", "avax", "아발란체"],
+  ALGO: ["algorand", "algo", "알고랜드"],
+  DOGE: ["dogecoin", "doge", "도지코인"],
+  SHIB: ["shiba inu", "shib", "시바이누"],
+  ETC: ["ethereum classic", "etc", "이더리움클래식"],
+  BCH: ["bitcoin cash", "bch", "비트코인캐시"],
+  LTC: ["litecoin", "ltc", "라이트코인"],
 };
 
-// ✅ 동적으로 코인 정보 가져오기
-async function fetchCoinInfo(symbol) {
-  const cacheKey = `coin_info_${symbol}`;
-  const cached = coinInfoCache.get(cacheKey);
+// ✅ 동적 키워드 생성 함수 (핵심 개선!)
+function generateDynamicKeywords(symbol) {
+  const symbolUpper = symbol.toUpperCase();
+  const symbolLower = symbol.toLowerCase();
 
-  if (cached && Date.now() - cached.timestamp < COIN_INFO_CACHE_DURATION) {
-    return cached.data;
-  }
+  // 기본 키워드에서 시작
+  let keywords = CORE_KEYWORDS[symbolUpper] || [];
 
-  try {
-    // CoinGecko에서 코인 정보 가져오기 (무료 API)
-    const response = await fetch(
-      `https://api.coingecko.com/api/v3/search?query=${symbol}`,
-      {
-        headers: {
-          Accept: "application/json",
-          "User-Agent": "CryptoWise/1.0",
-        },
-        signal: AbortSignal.timeout(3000), // 3초 타임아웃
-      }
-    );
+  // ✅ 동적으로 키워드 확장 (새로운 코인에도 대응)
+  const dynamicKeywords = [
+    // 심볼 기반 변형들
+    symbolLower,
+    symbolUpper,
+    `$${symbolUpper}`, // $BTC, $SOL 형태
+    `${symbolUpper}/USD`,
+    `${symbolUpper}/USDT`,
+    `${symbolUpper} price`,
+    `${symbolLower} price`,
+    `${symbolUpper} coin`,
+    `${symbolLower} coin`,
+    `${symbolUpper} token`,
+    `${symbolLower} token`,
 
-    if (!response.ok)
-      throw new Error(`CoinGecko API error: ${response.status}`);
+    // 일반적인 패턴들
+    `${symbolLower} crypto`,
+    `${symbolLower} cryptocurrency`,
+    `${symbolLower} blockchain`,
+    `${symbolUpper} analysis`,
+    `${symbolLower} trading`,
+    `${symbolUpper} market`,
 
-    const data = await response.json();
-    const coin = data.coins?.find(
-      (c) => c.symbol?.toLowerCase() === symbol.toLowerCase()
-    );
+    // 가격 관련
+    `${symbolUpper} surge`,
+    `${symbolUpper} rally`,
+    `${symbolUpper} crash`,
+    `${symbolUpper} pump`,
+    `${symbolUpper} dump`,
+  ];
 
-    if (coin) {
-      const coinInfo = {
-        name: coin.name?.toLowerCase(),
-        symbol: coin.symbol?.toLowerCase(),
-        id: coin.id,
-        aliases: [
-          coin.name?.toLowerCase(),
-          coin.symbol?.toLowerCase(),
-          coin.id?.toLowerCase(),
-          // 일반적인 변형들
-          `${coin.symbol}/usd`.toLowerCase(),
-          `${coin.symbol}/krw`.toLowerCase(),
-          `${coin.name} price`.toLowerCase(),
-        ].filter(Boolean),
-      };
+  // 중복 제거하고 합치기
+  const allKeywords = [...new Set([...keywords, ...dynamicKeywords])];
 
-      // 캐시 저장
-      coinInfoCache.set(cacheKey, {
-        data: coinInfo,
-        timestamp: Date.now(),
-      });
-
-      return coinInfo;
-    }
-  } catch (error) {
-    console.warn(`🔍 ${symbol} CoinGecko 조회 실패:`, error.message);
-  }
-
-  // 실패 시 정적 키워드 사용
-  return {
-    name: symbol.toLowerCase(),
-    symbol: symbol.toLowerCase(),
-    aliases: STATIC_CRYPTO_KEYWORDS[symbol.toUpperCase()] || [
-      symbol.toLowerCase(),
-    ],
-  };
+  console.log(
+    `🔍 ${symbol} 생성된 키워드 ${allKeywords.length}개:`,
+    allKeywords.slice(0, 10)
+  );
+  return allKeywords;
 }
 
-// ✅ 향상된 키워드 생성
-async function generateSearchKeywords(symbol) {
-  const coinInfo = await fetchCoinInfo(symbol);
-  const baseKeywords = [
-    symbol.toLowerCase(),
-    symbol.toUpperCase(),
-    ...coinInfo.aliases,
-  ];
+function checkRateLimit() {
+  const now = Date.now();
+  const minuteAgo = now - 60000;
 
-  // 일반적인 암호화폐 키워드 (관련성 확장)
-  const cryptoGeneralKeywords = [
-    "crypto",
-    "cryptocurrency",
-    "blockchain",
-    "digital currency",
-    "암호화폐",
-    "가상화폐",
-    "블록체인",
-    "디지털화폐",
-    "altcoin",
-    "defi",
-    "trading",
-    "investment",
-  ];
+  for (const [timestamp] of apiCallTracker) {
+    if (timestamp < minuteAgo) {
+      apiCallTracker.delete(timestamp);
+    }
+  }
 
-  return {
-    specific: [...new Set(baseKeywords)], // 특정 코인 키워드
-    general: cryptoGeneralKeywords, // 일반 암호화폐 키워드
-    coinInfo,
-  };
+  return apiCallTracker.size < MAX_CALLS_PER_MINUTE;
 }
 
 function getCachedNews(symbol) {
@@ -144,338 +109,264 @@ function getCachedNews(symbol) {
 }
 
 function cacheNews(symbol, data) {
-  cache.set(symbol, {
-    data,
-    timestamp: Date.now(),
-  });
-
-  // 캐시 크기 제한 (메모리 관리)
-  if (cache.size > 100) {
+  if (cache.size >= MAX_CACHE_SIZE) {
     const oldestKey = cache.keys().next().value;
     cache.delete(oldestKey);
   }
+
+  cache.set(symbol, {
+    data: {
+      ...data,
+      cached: false,
+      fetchTime: new Date().toISOString(),
+    },
+    timestamp: Date.now(),
+  });
 }
 
-async function fetchRSSFeed(url, timeout = 6000) {
+// ✅ 개선된 RSS 소스 (검증된 URL들)
+const RSS_SOURCES = [
+  "https://cointelegraph.com/rss",
+  "https://www.coindesk.com/arc/outboundfeeds/rss/", // ✅ 수정된 URL
+  "https://cryptonews.com/news/feed/",
+  "https://bitcoinist.com/feed/", // ✅ 추가
+];
+
+async function fetchRSSFeed(url, timeout = 5000) {
   return new Promise(async (resolve, reject) => {
     const timeoutId = setTimeout(() => {
       reject(new Error(`Timeout: ${url}`));
     }, timeout);
 
     try {
+      console.log(`📡 RSS 요청: ${url}`);
       const feed = await parser.parseURL(url);
       clearTimeout(timeoutId);
+
+      if (!feed || !feed.items || feed.items.length === 0) {
+        throw new Error("Empty feed data");
+      }
+
+      console.log(`✅ RSS 응답: ${feed.items.length}개 기사`);
       resolve(feed);
     } catch (error) {
       clearTimeout(timeoutId);
+      console.error(`❌ RSS 에러: ${error.message}`);
       reject(error);
     }
   });
 }
 
-// ✅ 향상된 뉴스 분석 함수
-async function analyzeNewsQuickly(feed, symbol) {
-  if (!feed || !feed.items || feed.items.length === 0) {
-    console.warn(`📰 ${symbol} RSS 피드 데이터 없음`);
-    return {
-      sentiment: "neutral",
-      score: 5.0,
-      strength: "neutral",
-      recentTrend: "neutral",
-      articles: [],
-      source: "no_data_fallback",
-      articlesCount: 0,
-      error: "No RSS feed data available",
-    };
+// ✅ 개선된 관련 기사 필터링 (유연한 매칭)
+function getRelevantArticles(feed, symbol) {
+  if (!feed?.items || !Array.isArray(feed.items)) {
+    console.warn("Invalid feed items");
+    return [];
   }
 
-  const keywords = await generateSearchKeywords(symbol);
+  const keywords = generateDynamicKeywords(symbol);
   const relevantArticles = [];
 
-  console.log(`🔍 ${symbol} 키워드 검색:`, {
-    specific: keywords.specific.slice(0, 5),
-    coinName: keywords.coinInfo.name,
-  });
+  // ✅ 첫 3개 기사 제목 디버깅
+  console.log(
+    `📖 첫 3개 기사 제목:`,
+    feed.items
+      .slice(0, 3)
+      .map((item) => `"${item.title}"`)
+      .join(", ")
+  );
 
-  // ✅ 개선된 관련 기사 필터링
-  for (const item of feed.items.slice(0, 150)) {
-    // 더 많은 기사 검토
-    const title = (item.title || "").toLowerCase();
-    const content = (item.contentSnippet || item.content || "").toLowerCase();
-    const text = `${title} ${content}`;
+  for (const item of feed.items.slice(0, 30)) {
+    // 30개 검토로 확장
+    try {
+      const title = (item.title || "").toLowerCase();
+      const content = (item.contentSnippet || item.content || "").toLowerCase();
+      const text = `${title} ${content}`;
 
-    // 특정 코인 키워드 매칭 (높은 우선순위)
-    const specificMatch = keywords.specific.some((keyword) => {
-      const keywordLower = keyword.toLowerCase();
-      return text.includes(keywordLower) || title.includes(keywordLower);
-    });
+      // ✅ 더 유연한 매칭 로직
+      const hasMatch = keywords.some((keyword) => {
+        const keywordLower = keyword.toLowerCase();
 
-    // 일반 암호화폐 키워드 매칭 (낮은 우선순위, 주요 코인만)
-    const generalMatch =
-      ["BTC", "ETH", "bitcoin", "ethereum"].includes(symbol.toUpperCase()) &&
-      keywords.general.some((keyword) => text.includes(keyword.toLowerCase()));
+        // 1. 완전 일치
+        if (text.includes(keywordLower)) return true;
 
-    if (specificMatch || generalMatch) {
-      relevantArticles.push({
-        title: item.title || "",
-        content: (content || "").substring(0, 300),
-        publishedAt: item.pubDate || item.isoDate,
-        url: item.link,
-        relevanceScore: specificMatch ? 2 : 1, // 특정 매칭이 더 높은 점수
-        publishDate: new Date(item.pubDate || item.isoDate || Date.now()),
+        // 2. 단어 경계 일치 (더 정확한 매칭)
+        const wordBoundaryRegex = new RegExp(`\\b${keywordLower}\\b`, "i");
+        if (wordBoundaryRegex.test(title) || wordBoundaryRegex.test(content))
+          return true;
+
+        // 3. 심볼 특별 매칭 ($BTC, BTC: 등)
+        const symbolRegex = new RegExp(
+          `[\\$\\s]${symbol.toUpperCase()}[\\s\\:\\/\\-\\.]`,
+          "i"
+        );
+        if (symbolRegex.test(text)) return true;
+
+        return false;
       });
 
-      if (relevantArticles.length >= 15) break; // 충분한 기사 수집
+      if (hasMatch) {
+        console.log(`✅ 매칭됨: "${item.title}"`);
+        relevantArticles.push({
+          title: item.title || "제목 없음",
+          content: content.substring(0, 200),
+          publishedAt: item.pubDate || item.isoDate || new Date().toISOString(),
+          url: item.link || "",
+          publishDate: new Date(item.pubDate || item.isoDate || Date.now()),
+        });
+
+        if (relevantArticles.length >= MAX_ARTICLES) break;
+      }
+    } catch (itemError) {
+      console.warn("기사 처리 에러:", itemError.message);
+      continue;
     }
   }
 
   console.log(`📰 ${symbol} 관련 기사 ${relevantArticles.length}개 발견`);
+  return relevantArticles;
+}
 
-  if (relevantArticles.length === 0) {
+// ✅ 개선된 감정 분석
+function analyzeSentiment(articles) {
+  if (!articles || articles.length === 0) {
     return {
       sentiment: "neutral",
       score: 5.0,
       strength: "neutral",
       recentTrend: "quiet",
-      articles: [],
-      source: "no_relevant_news",
       articlesCount: 0,
     };
   }
 
-  // ✅ 향상된 감정 분석 키워드
-  const sentimentKeywords = {
-    positive: [
-      // 영어
-      "bullish",
-      "surge",
-      "rally",
-      "breakout",
-      "moon",
-      "pump",
-      "soar",
-      "skyrocket",
-      "adoption",
-      "partnership",
-      "upgrade",
-      "positive",
-      "growth",
-      "breakthrough",
-      "innovation",
-      "institutional",
-      "etf",
-      "approved",
-      "milestone",
-      "record high",
-      "all-time high",
-      "ath",
-      "strong",
-      "optimistic",
-      "buy",
-      "long",
-      "investment",
-      // 한국어
-      "상승",
-      "급등",
-      "돌파",
-      "채택",
-      "파트너십",
-      "긍정",
-      "호재",
-      "신고가",
-      "최고가",
-      "투자",
-      "매수",
-      "강세",
-      "상승세",
-      "호황",
-      "기관투자",
-      "승인",
-    ],
-    negative: [
-      // 영어
-      "bearish",
-      "crash",
-      "dump",
-      "plunge",
-      "drop",
-      "fall",
-      "decline",
-      "sell-off",
-      "regulation",
-      "ban",
-      "hack",
-      "negative",
-      "risk",
-      "concern",
-      "fear",
-      "panic",
-      "correction",
-      "regulatory",
-      "lawsuit",
-      "investigation",
-      "crackdown",
-      "volatile",
-      "uncertainty",
-      "warning",
-      "caution",
-      "sell",
-      "short",
-      // 한국어
-      "하락",
-      "급락",
-      "규제",
-      "금지",
-      "해킹",
-      "부정",
-      "악재",
-      "조정",
-      "매도",
-      "약세",
-      "하락세",
-      "불안",
-      "경고",
-      "주의",
-      "리스크",
-      "위험",
-    ],
-    neutral: [
-      "analysis",
-      "report",
-      "update",
-      "commentary",
-      "overview",
-      "review",
-      "분석",
-      "리포트",
-      "업데이트",
-      "전망",
-      "검토",
-      "보고서",
-    ],
-  };
+  const positiveKeywords = [
+    // 영어
+    "bullish",
+    "surge",
+    "rally",
+    "breakout",
+    "adoption",
+    "partnership",
+    "positive",
+    "growth",
+    "institutional",
+    "approved",
+    "milestone",
+    "breakthrough",
+    "soar",
+    "pump",
+    "moon",
+    "rocket",
+    "gains",
+    "bull market",
+    "uptrend",
+    "rising",
+    "increase",
+    "high",
+    // 한국어
+    "상승",
+    "급등",
+    "돌파",
+    "채택",
+    "긍정",
+    "호재",
+    "강세",
+    "상승세",
+  ];
 
-  // ✅ 시간 가중치 적용 감정 분석
+  const negativeKeywords = [
+    // 영어
+    "bearish",
+    "crash",
+    "dump",
+    "regulation",
+    "ban",
+    "hack",
+    "negative",
+    "decline",
+    "correction",
+    "warning",
+    "drop",
+    "fall",
+    "plunge",
+    "bear market",
+    "downtrend",
+    "falling",
+    "decrease",
+    "low",
+    "sell-off",
+    "panic",
+    "fear",
+    // 한국어
+    "하락",
+    "급락",
+    "규제",
+    "금지",
+    "해킹",
+    "악재",
+    "약세",
+    "하락세",
+  ];
+
   let totalScore = 0;
   let scoredArticles = 0;
   const now = new Date();
   const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
 
-  relevantArticles.forEach((article) => {
-    const text = `${article.title} ${article.content}`.toLowerCase();
-    const articleDate = article.publishDate;
+  articles.forEach((article) => {
+    try {
+      const text = `${article.title} ${article.content}`.toLowerCase();
+      const isRecent = article.publishDate > oneDayAgo;
+      const timeWeight = isRecent ? 1.5 : 1.0; // 최근 뉴스 가중치
 
-    // 시간 가중치 계산
-    let timeWeight = 1.0;
-    if (articleDate > oneDayAgo) {
-      timeWeight = 2.0; // 24시간 이내 뉴스 높은 가중치
-    } else if (articleDate > threeDaysAgo) {
-      timeWeight = 1.5; // 3일 이내 뉴스 중간 가중치
-    }
+      const positiveCount = positiveKeywords.filter((word) =>
+        text.includes(word.toLowerCase())
+      ).length;
 
-    // 관련성 가중치
-    const relevanceWeight = article.relevanceScore || 1;
+      const negativeCount = negativeKeywords.filter((word) =>
+        text.includes(word.toLowerCase())
+      ).length;
 
-    const finalWeight = timeWeight * relevanceWeight;
+      let articleScore = 5.0;
 
-    // 감정 키워드 매칭
-    const positiveCount = sentimentKeywords.positive.filter((word) =>
-      text.includes(word.toLowerCase())
-    ).length;
+      if (positiveCount > negativeCount) {
+        articleScore = Math.min(5.0 + positiveCount * 1.0, 8.5);
+      } else if (negativeCount > positiveCount) {
+        articleScore = Math.max(5.0 - negativeCount * 1.0, 1.5);
+      }
 
-    const negativeCount = sentimentKeywords.negative.filter((word) =>
-      text.includes(word.toLowerCase())
-    ).length;
+      totalScore += articleScore * timeWeight;
+      scoredArticles += timeWeight;
 
-    let articleScore = 5.0; // 중립 기본값
-
-    if (positiveCount > negativeCount) {
-      // 긍정적 뉴스
-      const intensity = Math.min(positiveCount * 1.5, 5.0);
-      articleScore = 5.0 + intensity;
-    } else if (negativeCount > positiveCount) {
-      // 부정적 뉴스
-      const intensity = Math.min(negativeCount * 1.5, 5.0);
-      articleScore = 5.0 - intensity;
-    }
-
-    // 0-10 범위로 제한
-    articleScore = Math.max(0, Math.min(10, articleScore));
-
-    totalScore += articleScore * finalWeight;
-    scoredArticles += finalWeight;
-
-    // 디버깅용
-    if (positiveCount > 0 || negativeCount > 0) {
       console.log(
-        `📊 ${symbol} 기사 분석: ${articleScore.toFixed(1)}점 (긍정:${positiveCount}, 부정:${negativeCount}, 가중치:${finalWeight.toFixed(1)})`
+        `📊 기사 점수: ${articleScore.toFixed(1)} (긍정:${positiveCount}, 부정:${negativeCount})`
       );
+    } catch (scoreError) {
+      console.warn("점수 계산 에러:", scoreError.message);
     }
   });
 
   const finalScore = scoredArticles > 0 ? totalScore / scoredArticles : 5.0;
 
-  // ✅ 정교한 강도 계산
   let strength = "neutral";
-  if (finalScore >= 8.5) strength = "very_positive";
-  else if (finalScore >= 7.5) strength = "positive";
-  else if (finalScore >= 6.5) strength = "slightly_positive";
-  else if (finalScore <= 1.5) strength = "very_negative";
-  else if (finalScore <= 2.5) strength = "negative";
-  else if (finalScore <= 3.5) strength = "slightly_negative";
-
-  // ✅ 트렌드 분석 개선
-  const recentArticles = relevantArticles.filter(
-    (a) => a.publishDate > oneDayAgo
-  );
-  let recentTrend = "neutral";
-
-  if (recentArticles.length >= 3) {
-    const recentAvgScore =
-      recentArticles.reduce((sum, article) => {
-        const text = `${article.title} ${article.content}`.toLowerCase();
-        const pos = sentimentKeywords.positive.filter((w) =>
-          text.includes(w)
-        ).length;
-        const neg = sentimentKeywords.negative.filter((w) =>
-          text.includes(w)
-        ).length;
-        return sum + (pos > neg ? 1 : neg > pos ? -1 : 0);
-      }, 0) / recentArticles.length;
-
-    if (recentAvgScore > 0.3) recentTrend = "improving";
-    else if (recentAvgScore < -0.3) recentTrend = "worsening";
-    else recentTrend = "stable";
-  } else {
-    recentTrend = relevantArticles.length >= 2 ? "active" : "quiet";
-  }
-
-  console.log(
-    `📊 ${symbol} 감정 분석 완료: ${finalScore.toFixed(2)}/10 (${strength}) - ${relevantArticles.length}개 기사, 트렌드: ${recentTrend}`
-  );
+  if (finalScore >= 7.0) strength = "positive";
+  else if (finalScore <= 3.0) strength = "negative";
+  else if (finalScore >= 6.0) strength = "slightly_positive";
+  else if (finalScore <= 4.0) strength = "slightly_negative";
 
   return {
     sentiment: strength,
     score: Number(finalScore.toFixed(2)),
     strength,
-    recentTrend,
-    articles: relevantArticles.slice(0, 10), // 상위 10개만 반환
-    source: "live_analysis",
-    articlesCount: relevantArticles.length,
-    debugInfo: {
-      totalWeightedArticles: scoredArticles,
-      recentArticles: recentArticles.length,
-      coinKeywords: keywords.specific.length,
-      cacheUsed: keywords.coinInfo.id ? "dynamic" : "static",
-    },
+    recentTrend: articles.length >= 3 ? "active" : "quiet",
+    articlesCount: articles.length,
   };
 }
 
 export default async function handler(req, res) {
-  // CORS 헤더 설정
+  // ✅ CORS 헤더
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === "OPTIONS") {
@@ -483,142 +374,116 @@ export default async function handler(req, res) {
   }
 
   const { symbol } = req.query;
-
   if (!symbol) {
-    return res.status(400).json({ error: "Symbol parameter required" });
+    return res.status(400).json({
+      error: "Symbol parameter required",
+      timestamp: Date.now(),
+    });
   }
 
   try {
-    // 캐시 확인
+    console.log(`🔄 ${symbol} 뉴스 분석 시작`);
+
+    // ✅ 캐시 확인
     const cached = getCachedNews(symbol);
     if (cached) {
       console.log(`📋 ${symbol} 캐시된 데이터 반환`);
-      return res.json({
+      return res.status(200).json({
         ...cached,
         cached: true,
         timestamp: Date.now(),
       });
     }
 
-    console.log(`🔄 ${symbol} 새로운 뉴스 분석 시작...`);
+    // ✅ API 호출 제한 확인
+    if (!checkRateLimit()) {
+      console.warn(`⚠️ ${symbol} API 호출 제한 도달`);
+      return res.status(429).json({
+        sentiment: "neutral",
+        score: 5.0,
+        strength: "neutral",
+        recentTrend: "neutral",
+        articles: [],
+        articlesCount: 0,
+        cached: false,
+        error: "Rate limit exceeded",
+        timestamp: Date.now(),
+      });
+    }
 
-    // ✅ RSS 소스들 (신뢰성 순서로 정렬)
-    const rssSources = [
-      "https://cointelegraph.com/rss",
-      "https://coindesk.com/arc/outbound/feeds/rss",
-      "https://cryptonews.com/news/feed/",
-      "https://bitcoinist.com/feed/",
-      "https://decrypt.co/feed",
-      "https://cryptopotato.com/feed/",
-    ];
+    // ✅ API 호출 기록
+    apiCallTracker.set(Date.now(), symbol);
 
-    let analysis = null;
+    let allArticles = [];
     let successSource = null;
-    let lastError = null;
 
-    // RSS 소스들을 순차적으로 시도 (더 관대한 타임아웃)
-    for (const source of rssSources) {
+    // ✅ RSS 소스 순차 처리
+    for (const source of RSS_SOURCES) {
       try {
-        console.log(`🔄 ${symbol} 뉴스 수집 시도: ${source}`);
-        const feed = await fetchRSSFeed(source, 6000); // 6초 타임아웃
-        analysis = await analyzeNewsQuickly(feed, symbol);
-        successSource = source;
-        console.log(`✅ ${symbol} 뉴스 수집 성공: ${source}`);
-        break;
+        console.log(`📰 ${symbol} RSS 시도: ${source}`);
+        const feed = await fetchRSSFeed(source, 4000);
+        const articles = getRelevantArticles(feed, symbol);
+
+        if (articles.length > 0) {
+          allArticles = articles;
+          successSource = source;
+          console.log(`✅ ${symbol} 뉴스 수집 완료: ${articles.length}개`);
+          break;
+        }
       } catch (error) {
-        lastError = error;
-        console.log(
-          `❌ ${symbol} 뉴스 수집 실패: ${source} - ${error.message}`
-        );
+        console.log(`❌ ${symbol} RSS 실패: ${source} - ${error.message}`);
         continue;
       }
     }
 
-    // ✅ 모든 소스가 실패한 경우 더 상세한 폴백
-    if (!analysis) {
-      console.warn(`⚠️ ${symbol} 모든 RSS 소스 실패, 폴백 데이터 반환`);
-      analysis = {
-        sentiment: "neutral",
-        score: 5.0,
-        strength: "neutral",
-        recentTrend: "quiet",
-        articles: [],
-        source: "all_sources_failed",
-        error: lastError?.message || "All RSS sources failed",
-        articlesCount: 0,
-        debugInfo: {
-          attemptedSources: rssSources.length,
-          lastError: lastError?.message,
-        },
-      };
-    }
-
-    // 결과 검증
-    if (analysis.score < 0 || analysis.score > 10) {
-      console.warn(
-        `⚠️ ${symbol} 점수 범위 오류: ${analysis.score}, 5.0으로 보정`
-      );
-      analysis.score = 5.0;
-      analysis.strength = "neutral";
-    }
-
-    // 캐시 저장
-    cacheNews(symbol, analysis);
-
+    // ✅ 감정 분석
+    const analysis = analyzeSentiment(allArticles);
     const response = {
       ...analysis,
+      articles: allArticles.slice(0, 5),
+      source: successSource || "no_source_available",
       cached: false,
       timestamp: Date.now(),
-      successSource,
-      processingTime: Date.now(),
+      fetchTime: new Date().toISOString(),
     };
 
+    // ✅ 캐시 저장
+    cacheNews(symbol, response);
+
     console.log(
-      `✅ ${symbol} 뉴스 분석 완료: ${analysis.score}/10 (${analysis.strength})`
+      `✅ ${symbol} 분석 완료: ${analysis.score}/10 (${analysis.strength})`
     );
-
-    return res.json(response);
+    return res.status(200).json(response);
   } catch (error) {
-    console.error(`❌ ${symbol} 뉴스 분석 중 예외 발생:`, error);
+    console.error(`❌ ${symbol} 전체 에러:`, error);
 
-    // 에러 시에도 유용한 정보 제공
-    return res.status(500).json({
+    return res.status(200).json({
       sentiment: "neutral",
       score: 5.0,
       strength: "neutral",
       recentTrend: "neutral",
       articles: [],
-      source: "error_fallback",
+      articlesCount: 0,
       cached: false,
-      error: error.message,
+      error: error.message || "Unknown error",
       timestamp: Date.now(),
-      errorType: error.name || "UnknownError",
+      fallback: true,
     });
   }
 }
 
-// ✅ 캐시 정리 함수 (메모리 관리)
-setInterval(
-  () => {
-    const now = Date.now();
-
-    // 뉴스 캐시 정리
-    for (const [key, value] of cache.entries()) {
-      if (now - value.timestamp > CACHE_DURATION * 2) {
-        cache.delete(key);
+// ✅ 캐시 정리
+if (typeof setInterval !== "undefined") {
+  setInterval(
+    () => {
+      const now = Date.now();
+      for (const [key, value] of cache.entries()) {
+        if (now - value.timestamp > CACHE_DURATION * 2) {
+          cache.delete(key);
+        }
       }
-    }
-
-    // 코인 정보 캐시 정리
-    for (const [key, value] of coinInfoCache.entries()) {
-      if (now - value.timestamp > COIN_INFO_CACHE_DURATION * 2) {
-        coinInfoCache.delete(key);
-      }
-    }
-
-    console.log(
-      `🧹 캐시 정리 완료 - 뉴스: ${cache.size}개, 코인정보: ${coinInfoCache.size}개`
-    );
-  },
-  10 * 60 * 1000
-); // 10분마다 정리
+      console.log(`🧹 뉴스 캐시 정리: ${cache.size}개 유지`);
+    },
+    15 * 60 * 1000
+  );
+}
