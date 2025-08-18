@@ -1,4 +1,4 @@
-// src/hooks/usePaperTrading.js - 완전 수정 버전
+// src/hooks/usePaperTrading.js - 완전 수정 버전 (신중한 매수 시스템)
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useCoinStore } from "../stores/coinStore";
@@ -6,6 +6,7 @@ import { paperTradingEngine } from "../services/testing/paperTradingEngine";
 import { newsService } from "../services/news/newsService";
 import { useResilientWebSocket } from "./useResilientWebSocket";
 import { batchTradingService } from "../services/batch/batchTradingService";
+import { marketAnalysisService } from "../services/analysis/marketAnalysis";
 
 export const usePaperTrading = (
   userId = "demo-user",
@@ -18,26 +19,35 @@ export const usePaperTrading = (
   const [marketData, setMarketData] = useState(new Map());
   const [logs, setLogs] = useState([]);
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
+  const [marketCondition, setMarketCondition] = useState(null);
+  const [coinSettings, setCoinSettings] = useState(new Map());
 
   const getInitialSettings = () => {
     if (externalSettings) {
       return {
         ...externalSettings,
-        aggressiveMode: true,
-        signalSensitivity: 0.3,
+        aggressiveMode: false, // ✅ 기본적으로 신중한 모드
+        signalSensitivity: 0.2, // ✅ 낮은 민감도
       };
     }
 
     return {
-      buyThreshold: -0.5,
-      sellThreshold: 1.0,
-      rsiOversold: 45,
-      rsiOverbought: 60,
-      minScore: 4.5,
-      maxCoinsToTrade: 10,
-      reserveCashRatio: 0.1,
-      aggressiveMode: true,
-      signalSensitivity: 0.3,
+      // ✅ 더 엄격한 기본 설정
+      buyThreshold: -1.5, // 1.5% 하락 시 매수 검토
+      sellThreshold: 2.0, // 2% 상승 시 매도 검토
+      rsiOversold: 35, // RSI 35 이하
+      rsiOverbought: 65, // RSI 65 이상
+      minScore: 6.5, // 최소 6.5점
+      maxCoinsToTrade: 6, // 최대 6개 코인
+      reserveCashRatio: 0.2, // 20% 현금 보유
+      aggressiveMode: false,
+      signalSensitivity: 0.2,
+
+      // ✅ 신중한 매수를 위한 추가 설정
+      requireMultipleSignals: true, // 복수 신호 요구
+      minConfidenceLevel: 0.7, // 최소 신뢰도 70%
+      marketAnalysisWeight: 0.3, // 시장 분석 비중 30%
+      waitBetweenTrades: 300000, // 거래 간 5분 대기
     };
   };
 
@@ -46,9 +56,11 @@ export const usePaperTrading = (
     dataReceived: 0,
     signalsGenerated: 0,
     tradesExecuted: 0,
+    signalsRejected: 0,
     lastActivity: null,
     signalsEvaluated: 0,
     conditionsMet: 0,
+    marketConditionsChecked: 0,
   });
 
   // ✅ 환경에 따른 모드 설정
@@ -56,8 +68,8 @@ export const usePaperTrading = (
   const defaultMode = isDevelopment ? "websocket" : "scheduled";
   const [operationMode, setOperationMode] = useState(defaultMode);
   const [tradingMode, setTradingMode] = useState("favorites");
-  const [topCoinsLimit, setTopCoinsLimit] = useState(10);
-  const [testMode, setTestMode] = useState(true);
+  const [topCoinsLimit, setTopCoinsLimit] = useState(6); // ✅ 더 적은 수로 시작
+  const [testMode, setTestMode] = useState(false); // ✅ 기본적으로 실전 모드
 
   // Refs
   const isActiveRef = useRef(isActive);
@@ -68,7 +80,10 @@ export const usePaperTrading = (
   const priceHistory = useRef(new Map());
   const volumeHistory = useRef(new Map());
   const lastSignalTime = useRef(new Map());
+  const lastTradeTime = useRef(new Map()); // ✅ 마지막 거래 시간 추적
   const operationModeRef = useRef(operationMode);
+  const marketConditionRef = useRef(null);
+  const pendingSignals = useRef(new Map()); // ✅ 대기 중인 신호들
 
   const LOG_LEVELS = {
     ERROR: 0,
@@ -78,9 +93,9 @@ export const usePaperTrading = (
     DEBUG: 4,
   };
 
-  const CURRENT_LOG_LEVEL = LOG_LEVELS.DEBUG; // ✅ DEBUG로 변경하여 모든 로그 표시
+  const CURRENT_LOG_LEVEL = LOG_LEVELS.INFO; // ✅ INFO 레벨로 조정
 
-  // ✅ 키 중복 오류 해결: 더 강력한 유니크 ID 생성
+  // ✅ 로그 추가 함수
   const addLog = useCallback(
     (msg, type = "info") => {
       const typeLevel =
@@ -118,87 +133,72 @@ export const usePaperTrading = (
     [CURRENT_LOG_LEVEL]
   );
 
-  // ✅ 배치 서비스 초기화
-  useEffect(() => {
-    batchTradingService.setSignalCallback(async (signals) => {
-      addLog(`🎯 배치 분석: ${signals.length}개 신호 발견`, "success");
+  // ✅ 시장 조건 분석 및 업데이트
+  const updateMarketCondition = useCallback(async () => {
+    try {
+      const condition = await marketAnalysisService.analyzeMarketCondition();
+      setMarketCondition(condition);
+      marketConditionRef.current = condition;
 
       setMonitoringStats((prev) => ({
         ...prev,
-        dataReceived: prev.dataReceived + 1,
-        signalsEvaluated: prev.signalsEvaluated + signals.length,
+        marketConditionsChecked: prev.marketConditionsChecked + 1,
       }));
 
-      for (const signal of signals) {
-        try {
-          const result = await paperTradingEngine.executeSignal(signal);
-          if (result?.executed) {
-            addLog(
-              `✅ ${signal.symbol} ${signal.type} 배치 거래 완료! 가격: ${signal.price.toLocaleString()}원`,
-              "success"
-            );
-
-            setMonitoringStats((prev) => ({
-              ...prev,
-              tradesExecuted: prev.tradesExecuted + 1,
-              signalsGenerated: prev.signalsGenerated + 1,
-            }));
-
-            setLastSignal(signal);
-          } else {
-            addLog(
-              `⚠️ ${signal.symbol} ${signal.type} 배치 거래 실패: ${result?.reason}`,
-              "warning"
-            );
-          }
-        } catch (error) {
-          addLog(
-            `❌ ${signal.symbol} 배치 거래 실패: ${error.message}`,
-            "error"
-          );
-        }
+      if (!condition.isBuyableMarket) {
+        addLog(
+          `🚫 시장 조건 부적절: ${condition.buyability.level} (점수: ${condition.overallBuyScore})`,
+          "warning"
+        );
+      } else {
+        addLog(
+          `✅ 시장 분석 완료: ${condition.buyability.level} (점수: ${condition.overallBuyScore})`,
+          "info"
+        );
       }
 
-      updatePortfolio();
-    });
-
-    return () => {
-      batchTradingService.setSignalCallback(null);
-    };
+      return condition;
+    } catch (error) {
+      addLog(`❌ 시장 분석 실패: ${error.message}`, "error");
+      return null;
+    }
   }, [addLog]);
 
-  // 외부 설정 적용
-  useEffect(() => {
-    if (externalSettings) {
-      setTradingSettings((prev) => ({
-        ...prev,
-        ...externalSettings,
-        buyThreshold: testMode
-          ? externalSettings.buyThreshold * 0.6
-          : externalSettings.buyThreshold,
-        minScore: testMode
-          ? Math.max(externalSettings.minScore - 2, 3.0)
-          : externalSettings.minScore,
-      }));
+  // ✅ 동적 코인 설정 생성
+  const updateCoinSettings = useCallback(
+    async (marketCondition) => {
+      if (!marketCondition) return;
 
-      addLog(
-        `🔧 설정 업데이트: ${externalSettings.strategy || "사용자 설정"}`,
-        "info"
-      );
-    }
-  }, [externalSettings, testMode, addLog]);
+      const newCoinSettings = new Map();
+      const coins =
+        tradingMode === "favorites"
+          ? selectedCoinsRef.current
+          : [{ symbol: "BTC" }, { symbol: "ETH" }, { symbol: "ADA" }]; // fallback
 
-  // 설정 변경 로그
-  useEffect(() => {
-    if (isActive) {
-      addLog(
-        `📊 현재 거래 설정: 매수 ${tradingSettings.buyThreshold}%, 매도 ${tradingSettings.sellThreshold}%, 최소점수 ${tradingSettings.minScore}`,
-        "info"
-      );
-    }
-  }, [tradingSettings, isActive, addLog]);
+      for (const coin of coins) {
+        const userPreferences = {
+          // 사용자 설정이나 과거 성과 기반으로 조정 가능
+          priority: coin.priority || "medium",
+          maxPositionRatio: coin.maxPosition || 0.12,
+          riskTolerance: coin.riskLevel || 3,
+        };
 
-  // RSI 계산
+        const coinSetting = await marketAnalysisService.analyzeCoinCondition(
+          coin.symbol,
+          marketCondition,
+          userPreferences
+        );
+
+        newCoinSettings.set(coin.symbol, coinSetting);
+      }
+
+      setCoinSettings(newCoinSettings);
+      addLog(`🔧 ${coins.length}개 코인 설정 업데이트`, "info");
+    },
+    [tradingMode, selectedCoinsRef]
+  );
+
+  // ✅ RSI 계산 (기존과 동일)
   const calculateRealTimeRSI = useCallback((symbol, currentPrice) => {
     if (!priceHistory.current.has(symbol)) {
       priceHistory.current.set(symbol, []);
@@ -245,32 +245,14 @@ export const usePaperTrading = (
       losses.slice(-period).reduce((a, b) => a + b, 0) / period || 0;
 
     if (avgLoss === 0) return 100;
+
     const rs = avgGain / avgLoss;
     return 100 - 100 / (1 + rs);
   }, []);
 
-  // 모멘텀 계산
-  const calculateMarketMomentum = useCallback((changePercent, volume) => {
-    let momentumScore = 5.0;
-    const absChange = Math.abs(changePercent);
-
-    if (absChange >= 3.0) momentumScore = 8.5;
-    else if (absChange >= 2.0) momentumScore = 7.5;
-    else if (absChange >= 1.0) momentumScore = 6.5;
-    else if (absChange >= 0.5) momentumScore = 5.5;
-    else if (absChange <= 0.2) momentumScore = 4.0;
-
-    if (volume) {
-      if (volume > 2000000000) momentumScore += 1.0;
-      else if (volume > 1000000000) momentumScore += 0.5;
-    }
-
-    return Math.min(momentumScore, 10.0);
-  }, []);
-
-  // 뉴스 캐시
+  // ✅ 뉴스 캐시 (기존과 동일하지만 timeout 조정)
   const newsCache = useRef(new Map());
-  const NEWS_CACHE_DURATION = 300000;
+  const NEWS_CACHE_DURATION = 600000; // 10분으로 연장
 
   const fetchNewsForSymbol = useCallback(async (symbol) => {
     try {
@@ -283,8 +265,7 @@ export const usePaperTrading = (
         return cached.data;
       }
 
-      // ✅ 목 뉴스 점수 - 실제 프로덕션에서는 실제 뉴스 서비스 사용
-      const mockNewsScore = Math.random() * 4 + 3;
+      const mockNewsScore = Math.random() * 4 + 3; // 3-7점
       const newsData = {
         score: mockNewsScore,
         sentiment:
@@ -315,7 +296,7 @@ export const usePaperTrading = (
     }
   }, []);
 
-  // 신호 생성
+  // ✅ 엄격한 신호 생성 시스템
   const generateTradingSignal = useCallback(
     async (md) => {
       try {
@@ -328,80 +309,98 @@ export const usePaperTrading = (
           signalsEvaluated: prev.signalsEvaluated + 1,
         }));
 
-        const lastSignal = lastSignalTime.current.get(symbol) || 0;
-        const now = Date.now();
-        if (now - lastSignal < 60000) return null;
+        // ✅ 1단계: 시장 조건 확인
+        const currentMarketCondition = marketConditionRef.current;
+        if (
+          !currentMarketCondition ||
+          !currentMarketCondition.isBuyableMarket
+        ) {
+          addLog(
+            `🚫 ${symbol}: 시장 조건 부적절 (점수: ${currentMarketCondition?.overallBuyScore || "N/A"})`,
+            "debug"
+          );
+          return null;
+        }
 
+        // ✅ 2단계: 거래 간격 확인
+        const lastTrade = lastTradeTime.current.get(symbol) || 0;
+        const now = Date.now();
+        const settings = tradingSettingsRef.current;
+
+        if (now - lastTrade < settings.waitBetweenTrades) {
+          return null; // 너무 빨른 거래 방지
+        }
+
+        // ✅ 3단계: 신호 간격 확인
+        const lastSignal = lastSignalTime.current.get(symbol) || 0;
+        if (now - lastSignal < 120000) {
+          // 2분 간격
+          return null;
+        }
+
+        // ✅ 4단계: 기술적 분석
         const rsi = calculateRealTimeRSI(symbol, price);
+        const newsData = await fetchNewsForSymbol(symbol);
+
+        // ✅ 5단계: 매수 조건 검사 (복수 조건 필요)
+        const buyConditions = [
+          changePercent <= settings.buyThreshold, // 충분한 하락
+          rsi <= settings.rsiOversold, // RSI 과매도
+          newsData.score >= 5.0, // 뉴스 중립 이상
+          md.trade_volume > (volumeHistory.current.get(symbol) || 0) * 1.1, // 거래량 증가
+        ];
+
+        const satisfiedConditions = buyConditions.filter(Boolean).length;
+        const requiredConditions = settings.requireMultipleSignals ? 3 : 2;
+
+        if (satisfiedConditions < requiredConditions) {
+          addLog(
+            `📊 ${symbol}: 매수 조건 부족 (${satisfiedConditions}/${requiredConditions})`,
+            "debug"
+          );
+          setMonitoringStats((prev) => ({
+            ...prev,
+            signalsRejected: prev.signalsRejected + 1,
+          }));
+          return null;
+        }
+
+        // ✅ 6단계: 점수 계산 (더 엄격)
         let techScore = 5.0;
 
-        if (changePercent <= -2.0 && rsi <= 45) {
-          techScore = 9.0;
-        } else if (changePercent <= -1.5) {
-          techScore = 8.0;
-        } else if (changePercent <= -1.0 && rsi <= 50) {
-          techScore = 7.5;
-        } else if (changePercent <= -0.5) {
-          techScore = 6.5;
-        } else if (rsi <= 35) {
-          techScore = 7.5;
-        } else if (rsi <= 40) {
-          techScore = 6.8;
-        } else if (changePercent >= 2.0 && rsi >= 65) {
-          techScore = 2.0;
-        } else if (changePercent >= 1.5) {
-          techScore = 3.5;
-        } else if (rsi >= 70) {
-          techScore = 2.5;
-        } else if (Math.abs(changePercent) >= 1.0) {
-          techScore = 6.0;
+        if (changePercent <= -3.0 && rsi <= 30) techScore = 9.0;
+        else if (changePercent <= -2.0 && rsi <= 35) techScore = 8.0;
+        else if (changePercent <= -1.5 && rsi <= 40) techScore = 7.0;
+        else if (changePercent <= -1.0) techScore = 6.0;
+        else if (rsi <= 35) techScore = 6.5;
+
+        const marketScore = currentMarketCondition.overallBuyScore / 10; // 0-10점으로 정규화
+        const compositeScore =
+          techScore * 0.5 + newsData.score * 0.2 + marketScore * 0.3;
+
+        // ✅ 7단계: 최종 점수 검증
+        if (compositeScore < settings.minScore) {
+          addLog(
+            `📊 ${symbol}: 점수 부족 (${compositeScore.toFixed(2)} < ${settings.minScore})`,
+            "debug"
+          );
+          setMonitoringStats((prev) => ({
+            ...prev,
+            signalsRejected: prev.signalsRejected + 1,
+          }));
+          return null;
         }
 
-        const newsData = await fetchNewsForSymbol(symbol);
-        const marketMomentumScore = calculateMarketMomentum(
-          changePercent,
-          md.trade_volume
-        );
-
-        const compositeScore =
-          techScore * 0.6 + marketMomentumScore * 0.3 + newsData.score * 0.1;
-
-        const settings = tradingSettingsRef.current;
-        let signalType = null;
-        let confidence = "medium";
-
+        // ✅ 8단계: 매도 조건 검사
+        let signalType = "BUY";
         if (
-          compositeScore >= settings.minScore &&
-          changePercent <= settings.buyThreshold
-        ) {
-          signalType = "BUY";
-          confidence = compositeScore >= 7.0 ? "high" : "medium";
-        } else if (
-          compositeScore <= 4.0 ||
-          (changePercent >= settings.sellThreshold &&
-            rsi >= settings.rsiOverbought)
+          changePercent >= settings.sellThreshold ||
+          rsi >= settings.rsiOverbought
         ) {
           signalType = "SELL";
-          confidence = "medium";
-        } else if (
-          settings.aggressiveMode &&
-          Math.random() > 1 - settings.signalSensitivity
-        ) {
-          if (Math.abs(changePercent) >= 0.8) {
-            signalType = changePercent < 0 ? "BUY" : "SELL";
-            confidence = "low";
-          }
         }
 
-        setMonitoringStats((prev) => ({
-          ...prev,
-          conditionsMet: signalType
-            ? prev.conditionsMet + 1
-            : prev.conditionsMet,
-        }));
-
-        if (!signalType) return null;
-
+        // ✅ 9단계: 신호 생성
         lastSignalTime.current.set(symbol, now);
 
         const signal = {
@@ -409,26 +408,31 @@ export const usePaperTrading = (
           type: signalType,
           price,
           totalScore: Number(compositeScore.toFixed(2)),
-          confidence,
-          reason: `${symbol} ${signalType} - 기술:${techScore.toFixed(1)}, 모멘텀:${marketMomentumScore.toFixed(1)}, 뉴스:${newsData.score.toFixed(1)}`,
+          confidence:
+            compositeScore >= 7.5
+              ? "high"
+              : compositeScore >= 6.5
+                ? "medium"
+                : "low",
+          reason: `${symbol} ${signalType} - 기술:${techScore.toFixed(1)}, 시장:${marketScore.toFixed(1)}, 뉴스:${newsData.score.toFixed(1)}`,
           timestamp: new Date(),
           changePercent: Number(changePercent.toFixed(2)),
           technicalAnalysis: { rsi, techScore },
           newsAnalysis: newsData,
-          marketMomentum: marketMomentumScore,
+          marketAnalysis: currentMarketCondition.buyability,
+          satisfiedConditions,
           testMode: testMode,
         };
 
         addLog(
-          `🎯 ${symbol} ${signalType} 신호! 점수=${compositeScore.toFixed(1)} (기술:${techScore.toFixed(1)}, 변동:${changePercent.toFixed(2)}%, RSI:${rsi.toFixed(1)})`,
+          `🎯 ${symbol} ${signalType} 신호! 점수=${compositeScore.toFixed(1)} (조건:${satisfiedConditions}/${requiredConditions})`,
           signalType === "BUY" ? "success" : "warning"
         );
-
-        addLog(`📋 신호 상세: ${signal.reason}`, "debug");
 
         setMonitoringStats((prev) => ({
           ...prev,
           signalsGenerated: prev.signalsGenerated + 1,
+          conditionsMet: prev.conditionsMet + 1,
         }));
 
         return signal;
@@ -437,18 +441,12 @@ export const usePaperTrading = (
         return null;
       }
     },
-    [
-      calculateRealTimeRSI,
-      fetchNewsForSymbol,
-      calculateMarketMomentum,
-      addLog,
-      testMode,
-    ]
+    [calculateRealTimeRSI, fetchNewsForSymbol, addLog, testMode]
   );
 
-  // 타겟 마켓 확인
+  // ✅ 타겟 마켓 확인 (기존과 동일)
   const getTargetMarkets = useCallback(() => {
-    const MAX_MARKETS = 10;
+    const MAX_MARKETS = marketConditionRef.current?.maxPositions || 6;
 
     if (tradingMode === "favorites") {
       const favoriteMarkets = selectedCoinsRef.current.map(
@@ -464,44 +462,14 @@ export const usePaperTrading = (
       "KRW-ADA",
       "KRW-SOL",
       "KRW-DOGE",
-      "KRW-DOT",
-      "KRW-MATIC",
-      "KRW-AVAX",
-      "KRW-LINK",
-      "KRW-ATOM",
-      "KRW-NEAR",
-      "KRW-ALGO",
-      "KRW-AXS",
-      "KRW-SAND",
     ];
 
-    let topMarkets = [];
+    return extendedFallback.slice(0, MAX_MARKETS);
+  }, [tradingMode]);
 
-    try {
-      const coinStoreState = useCoinStore.getState();
-      const availableCoins = coinStoreState.getFilteredCoins();
-
-      if (availableCoins && availableCoins.length > 0) {
-        topMarkets = availableCoins
-          .slice(0, topCoinsLimit)
-          .map((coin) => coin.market);
-      }
-    } catch (error) {
-      console.warn("coinStore 접근 실패, fallback 사용:", error);
-    }
-
-    const finalPool =
-      topMarkets.length >= topCoinsLimit
-        ? topMarkets
-        : extendedFallback.slice(0, topCoinsLimit);
-
-    return finalPool.slice(0, MAX_MARKETS);
-  }, [tradingMode, topCoinsLimit]);
-
-  // ✅ 마켓 데이터 처리 - 스케줄 모드 시 무시
+  // ✅ 마켓 데이터 처리 (수정된 버전)
   const handleMarketData = useCallback(
     async (data) => {
-      // ✅ 스케줄 모드일 때는 WebSocket 데이터 완전 무시
       if (!isActiveRef.current || operationModeRef.current === "scheduled") {
         return;
       }
@@ -516,7 +484,6 @@ export const usePaperTrading = (
       setMarketData((prev) => new Map(prev.set(symbol, data)));
 
       let isTargetCoin = false;
-
       if (tradingMode === "favorites") {
         isTargetCoin = selectedCoinsRef.current.some(
           (coin) => coin.symbol === symbol || coin.market === data.code
@@ -528,48 +495,43 @@ export const usePaperTrading = (
 
       if (!isTargetCoin) return;
 
-      // 가격 로그 (30초마다)
+      // 거래량 히스토리 업데이트
+      volumeHistory.current.set(symbol, data.trade_volume);
+
+      // 가격 로그 (60초마다로 조정)
       const now = Date.now();
       const key = "__lastDataLog";
       const last = window[key]?.get?.(symbol) || 0;
-
-      if (now - last > 30000) {
+      if (now - last > 60000) {
         const cp = (data.signed_change_rate || 0) * 100;
         const icon = cp >= 0 ? "📈" : "📉";
-
         addLog(
           `${icon} ${symbol}: ${data.trade_price.toLocaleString()}원 (${cp >= 0 ? "+" : ""}${cp.toFixed(2)}%)`,
-          "info"
+          "debug"
         );
-
         if (!window[key]) window[key] = new Map();
         window[key].set(symbol, now);
       }
 
-      // ✅ 실시간 가격 업데이트 추가
-      paperTradingEngine.updatePrices({
-        [data.code]: data.trade_price,
-      });
+      // 실시간 가격 업데이트
+      paperTradingEngine.updateCoinPrice(symbol, data.trade_price);
 
+      // 신호 생성 및 거래 실행
       const signal = await generateTradingSignal(data);
-
       if (signal) {
         setLastSignal(signal);
-
         try {
           const result = await paperTradingEngine.executeSignal(signal);
-
           if (result?.executed) {
+            lastTradeTime.current.set(symbol, now);
             addLog(
               `✅ ${signal.symbol} ${signal.type} 거래 완료! 가격: ${signal.price.toLocaleString()}원`,
               "success"
             );
-
             setMonitoringStats((prev) => ({
               ...prev,
               tradesExecuted: prev.tradesExecuted + 1,
             }));
-
             updatePortfolio();
           } else {
             addLog(
@@ -585,7 +547,7 @@ export const usePaperTrading = (
     [generateTradingSignal, addLog, tradingMode, getTargetMarkets]
   );
 
-  // WebSocket 구독
+  // ✅ WebSocket 구독 (기존과 동일)
   const sendSubscription = useCallback(() => {
     const markets = getTargetMarkets();
     if (markets.length === 0) return;
@@ -596,7 +558,6 @@ export const usePaperTrading = (
     ]);
 
     const sent = sendMessage(msg);
-
     if (sent) {
       addLog(
         `📡 구독: ${markets.length}개 코인 (${tradingMode}) - ${markets.slice(0, 3).join(", ")}${markets.length > 3 ? "..." : ""}`,
@@ -607,14 +568,13 @@ export const usePaperTrading = (
     }
   }, [getTargetMarkets, addLog, tradingMode]);
 
-  // ✅ WebSocket 연결
+  // WebSocket 연결
   const { isConnected, reconnect, disconnect, sendMessage } =
     useResilientWebSocket("wss://api.upbit.com/websocket/v1", {
       onMessage: handleMarketData,
       onConnect: () => {
         setConnectionStatus("connected");
         addLog("📡 WebSocket 연결됨", "success");
-
         setTimeout(() => {
           sendSubscription();
         }, 200);
@@ -638,144 +598,7 @@ export const usePaperTrading = (
     }
   }, [addLog]);
 
-  // ✅ 폴링 모드 - API URL 수정
-  const startPollingMode = useCallback(() => {
-    if (pollingIntervalRef.current) return;
-
-    pollingIntervalRef.current = setInterval(async () => {
-      if (!isActiveRef.current) return;
-
-      try {
-        const markets = getTargetMarkets().slice(0, 3);
-
-        for (const market of markets) {
-          // ✅ API URL 수정 - 각 마켓별로 개별 호출
-          const response = await fetch(
-            `https://api.upbit.com/v1/ticker?markets=${market}`
-          );
-
-          if (!response.ok) {
-            throw new Error(`API 호출 실패: ${response.status}`);
-          }
-
-          const [data] = await response.json();
-
-          if (data) {
-            await handleMarketData({
-              code: data.market,
-              trade_price: data.trade_price,
-              signed_change_rate: data.signed_change_rate,
-              trade_volume: data.trade_volume,
-            });
-          }
-
-          // API 레이트 리밋 방지
-          await new Promise((resolve) => setTimeout(resolve, 200));
-        }
-      } catch (error) {
-        addLog(`폴링 오류: ${error.message}`, "error");
-      }
-    }, 10000);
-
-    addLog("📊 폴링 모드 시작", "info");
-  }, [handleMarketData, addLog, getTargetMarkets]);
-
-  // 모드 변경 시 구독 갱신
-  useEffect(() => {
-    if (!isActiveRef.current) return;
-
-    const subscriptionTimeout = setTimeout(() => {
-      if (operationMode === "websocket" && isConnected) {
-        addLog(`🔄 모드 변경: ${tradingMode} → 구독 갱신`, "info");
-        sendSubscription();
-      } else if (operationMode === "polling") {
-        addLog(`🔄 모드 변경: ${tradingMode} (폴링 반영)`, "info");
-      }
-    }, 100);
-
-    return () => clearTimeout(subscriptionTimeout);
-  }, [
-    tradingMode,
-    topCoinsLimit,
-    operationMode,
-    isConnected,
-    sendSubscription,
-    addLog,
-  ]);
-
-  // ✅ 개발자 테스트용 즉시 배치 실행 함수 - API URL 수정
-  const executeImmediateBatch = useCallback(async () => {
-    addLog("🧪 개발자 테스트: 즉시 배치 실행", "info");
-
-    try {
-      // ✅ 목 배치 서비스 실행 (실제 API 대신)
-      const markets = getTargetMarkets().slice(0, 3);
-      const signals = [];
-
-      for (const market of markets) {
-        try {
-          // ✅ 개별 API 호출로 수정
-          const response = await fetch(
-            `https://api.upbit.com/v1/ticker?markets=${market}`
-          );
-
-          if (response.ok) {
-            const [data] = await response.json();
-
-            if (data) {
-              const symbol = data.market.replace("KRW-", "");
-              const changePercent = (data.signed_change_rate || 0) * 100;
-
-              // 목 신호 생성
-              if (Math.abs(changePercent) > 0.5) {
-                signals.push({
-                  symbol,
-                  type: changePercent < 0 ? "BUY" : "SELL",
-                  price: data.trade_price,
-                  totalScore: 6.5,
-                  confidence: "medium",
-                  reason: `배치 테스트 신호 - 변동률: ${changePercent.toFixed(2)}%`,
-                  timestamp: new Date(),
-                  changePercent,
-                });
-              }
-            }
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          console.warn(`${market} 데이터 가져오기 실패:`, error);
-        }
-      }
-
-      addLog(`✅ 즉시 배치 완료: ${signals.length}개 신호 생성`, "success");
-
-      // 신호 처리
-      for (const signal of signals) {
-        try {
-          const result = await paperTradingEngine.executeSignal(signal);
-
-          if (result?.executed) {
-            addLog(
-              `✅ ${signal.symbol} ${signal.type} 배치 거래 완료!`,
-              "success"
-            );
-          }
-        } catch (error) {
-          addLog(
-            `❌ ${signal.symbol} 배치 거래 실패: ${error.message}`,
-            "error"
-          );
-        }
-      }
-
-      updatePortfolio();
-    } catch (error) {
-      addLog(`❌ 즉시 배치 실패: ${error.message}`, "error");
-    }
-  }, [addLog, getTargetMarkets]);
-
-  // 통합 시작 함수
+  // ✅ 통합 시작 함수 (수정된 버전)
   const startPaperTrading = useCallback(async () => {
     if (isActiveRef.current) return;
 
@@ -788,67 +611,64 @@ export const usePaperTrading = (
       setIsActive(true);
       isActiveRef.current = true;
 
+      // 통계 초기화
       setMonitoringStats({
         dataReceived: 0,
         signalsGenerated: 0,
         tradesExecuted: 0,
+        signalsRejected: 0,
         signalsEvaluated: 0,
         conditionsMet: 0,
+        marketConditionsChecked: 0,
         lastActivity: new Date().toLocaleTimeString(),
       });
 
+      addLog("🚀 신중한 페이퍼 트레이딩 시작", "success");
+      addLog("📊 시장 분석 중...", "info");
+
+      // ✅ 시장 조건 분석
+      const marketCondition = await updateMarketCondition();
+      if (marketCondition) {
+        await updateCoinSettings(marketCondition);
+
+        if (!marketCondition.isBuyableMarket) {
+          addLog("⚠️ 시장 조건이 좋지 않음 - 신중한 거래 모드", "warning");
+        }
+
+        addLog(
+          `💰 권장 현금 비율: ${(marketCondition.recommendedCashRatio * 100).toFixed(1)}%`,
+          "info"
+        );
+        addLog(`📈 최대 포지션 수: ${marketCondition.maxPositions}개`, "info");
+      }
+
       updatePortfolio();
 
+      // 운영 모드별 시작
       if (operationMode === "scheduled") {
-        // ✅ 스케줄 모드: 모든 실시간 연결 차단
-        addLog("📅 스케줄 모드 시작 - 실시간 연결 완전 차단", "success");
-        addLog("⏰ 실행: 09:00, 13:00, 16:00, 20:00, 23:00 (하루 5회)", "info");
-        addLog("🚫 WebSocket/폴링 완전 비활성화", "info");
-
-        // 기존 연결 정리
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current);
-          pollingIntervalRef.current = null;
-        }
-
-        if (isConnected) {
-          disconnect();
-          addLog("🔌 WebSocket 강제 연결 해제", "info");
-        }
-
+        addLog("📅 스케줄 모드 시작 - 신중한 분석 기반", "success");
         await batchTradingService.startScheduledTrading();
-        const status = batchTradingService.getStatus();
-
-        if (status.nextExecution) {
-          const nextTime = status.nextExecution.toLocaleTimeString();
-          const hoursUntil =
-            Math.round(
-              ((status.nextExecution - Date.now()) / 1000 / 60 / 60) * 10
-            ) / 10;
-
-          addLog(`📍 다음 실행: ${nextTime} (${hoursUntil}시간 후)`, "info");
-          addLog("😴 그때까지 시스템 완전 대기 상태", "info");
-        }
-      } else if (operationMode === "polling") {
-        addLog("🔄 폴링 모드 시작", "success");
-        addLog("⚠️ 개발/테스트 전용 - 프로덕션 비추천", "warning");
-        startPollingMode();
       } else if (operationMode === "websocket") {
-        addLog("📡 WebSocket 모드 시작", "success");
-        addLog("⚠️ 개발/테스트 전용 - 리소스 많이 사용", "warning");
-
-        if (!isConnected) {
-          addLog("⚠️ WebSocket 연결 중... 폴링으로 전환", "warning");
-          startPollingMode();
-        } else {
-          setTimeout(() => {
-            sendSubscription();
-          }, 200);
+        addLog("📡 실시간 모니터링 시작 - 신중한 신호 분석", "success");
+        if (isConnected) {
+          setTimeout(() => sendSubscription(), 200);
         }
       }
 
-      if (testMode) {
-        addLog("🧪 테스트 모드: 더 관대한 매수 조건", "info");
+      // 시장 조건 정기 업데이트 (10분마다)
+      const marketUpdateInterval = setInterval(async () => {
+        if (isActiveRef.current) {
+          await updateMarketCondition();
+        }
+      }, 600000);
+
+      // cleanup을 위해 ref에 저장
+      pollingIntervalRef.current = marketUpdateInterval;
+
+      if (!testMode) {
+        addLog("🎯 실전 모드: 엄격한 조건으로 신중한 거래", "info");
+      } else {
+        addLog("🧪 테스트 모드: 더 관대한 조건으로 테스트", "info");
       }
     } catch (error) {
       addLog(`❌ 시작 실패: ${error.message}`, "error");
@@ -861,16 +681,17 @@ export const usePaperTrading = (
     testMode,
     addLog,
     updatePortfolio,
-    startPollingMode,
+    updateMarketCondition,
+    updateCoinSettings,
     isConnected,
     sendSubscription,
-    disconnect,
   ]);
 
   // 중지 함수
   const stopPaperTrading = useCallback(() => {
     setIsActive(false);
     isActiveRef.current = false;
+
     batchTradingService.stopScheduledTrading();
 
     if (pollingIntervalRef.current) {
@@ -878,64 +699,37 @@ export const usePaperTrading = (
       pollingIntervalRef.current = null;
     }
 
-    addLog(`⏹️ ${operationMode} 모드 페이퍼 트레이딩 중지`, "warning");
-  }, [operationMode, addLog]);
+    addLog(`⏹️ 신중한 페이퍼 트레이딩 중지`, "warning");
+  }, [addLog]);
 
-  // 테스트 모드 토글
+  // 나머지 함수들 (기존과 동일)
   const toggleTestMode = useCallback(() => {
     setTestMode((prev) => {
       const newTestMode = !prev;
-
       if (newTestMode) {
         setTradingSettings((prevSettings) => ({
           ...prevSettings,
-          buyThreshold: -0.3,
-          sellThreshold: 0.8,
-          minScore: 4.0,
-          rsiOversold: 50,
-          rsiOverbought: 55,
+          buyThreshold: -0.8,
+          minScore: 5.0,
+          requireMultipleSignals: false,
           aggressiveMode: true,
           signalSensitivity: 0.4,
         }));
-
-        addLog("🧪 테스트 모드 활성화 - 신호 생성 대폭 증가", "info");
+        addLog("🧪 테스트 모드 활성화 - 더 관대한 조건", "info");
       } else {
         setTradingSettings((prevSettings) => ({
           ...prevSettings,
-          buyThreshold: -0.8,
-          sellThreshold: 1.2,
-          minScore: 5.5,
-          rsiOversold: 40,
-          rsiOverbought: 65,
+          buyThreshold: -1.5,
+          minScore: 6.5,
+          requireMultipleSignals: true,
           aggressiveMode: false,
-          signalSensitivity: 0.3,
+          signalSensitivity: 0.2,
         }));
-
-        addLog("📊 정상 모드 복구", "info");
+        addLog("🎯 실전 모드 복구 - 엄격한 조건", "info");
       }
-
       return newTestMode;
     });
   }, [addLog]);
-
-  // 상태 확인
-  const getOperationStatus = useCallback(() => {
-    if (operationMode === "scheduled") {
-      return batchTradingService.getStatus();
-    } else if (operationMode === "polling") {
-      return {
-        isRunning: !!pollingIntervalRef.current,
-        mode: "polling",
-        interval: "10초",
-      };
-    } else {
-      return {
-        isRunning: isConnected,
-        mode: "websocket",
-        status: connectionStatus,
-      };
-    }
-  }, [operationMode, isConnected, connectionStatus]);
 
   // Refs 동기화
   useEffect(() => {
@@ -954,6 +748,13 @@ export const usePaperTrading = (
     operationModeRef.current = operationMode;
   }, [operationMode]);
 
+  // ✅ 시장 조건 변화 감지
+  useEffect(() => {
+    if (isActive && marketCondition) {
+      updateCoinSettings(marketCondition);
+    }
+  }, [isActive, marketCondition, updateCoinSettings]);
+
   useEffect(() => {
     return () => {
       if (pollingIntervalRef.current) {
@@ -963,6 +764,64 @@ export const usePaperTrading = (
     };
   }, []);
 
+  const executeImmediateBatch = useCallback(async () => {
+    addLog("🧪 개발자 테스트: 즉시 배치 실행", "info");
+    try {
+      // 배치 서비스 콜백 설정
+      batchTradingService.setSignalCallback(async (signals) => {
+        addLog(`🎯 즉시 배치: ${signals.length}개 신호 발견`, "success");
+
+        setMonitoringStats((prev) => ({
+          ...prev,
+          dataReceived: prev.dataReceived + 1,
+          signalsEvaluated: prev.signalsEvaluated + signals.length,
+        }));
+
+        for (const signal of signals) {
+          try {
+            const result = await paperTradingEngine.executeSignal(signal);
+            if (result?.executed) {
+              addLog(
+                `✅ ${signal.symbol} ${signal.type} 즉시배치 완료! 가격: ${signal.price.toLocaleString()}원`,
+                "success"
+              );
+              setMonitoringStats((prev) => ({
+                ...prev,
+                tradesExecuted: prev.tradesExecuted + 1,
+                signalsGenerated: prev.signalsGenerated + 1,
+              }));
+              setLastSignal(signal);
+            } else {
+              addLog(
+                `⚠️ ${signal.symbol} ${signal.type} 즉시배치 실패: ${result?.reason}`,
+                "warning"
+              );
+            }
+          } catch (error) {
+            addLog(
+              `❌ ${signal.symbol} 즉시배치 실행 실패: ${error.message}`,
+              "error"
+            );
+          }
+        }
+        updatePortfolio();
+      });
+
+      // 배치 분석 즉시 실행
+      const result = await batchTradingService.executeBatchAnalysis();
+      if (result.success) {
+        addLog(
+          `✅ 즉시 배치 완료: ${result.tradesExecuted}개 거래, ${result.totalAnalyzed}개 분석`,
+          "success"
+        );
+      } else {
+        addLog(`❌ 즉시 배치 실패: ${result.error}`, "error");
+      }
+    } catch (error) {
+      addLog(`❌ 즉시 배치 실패: ${error.message}`, "error");
+    }
+  }, [addLog, updatePortfolio]);
+
   return {
     portfolio,
     isActive,
@@ -971,6 +830,7 @@ export const usePaperTrading = (
     lastSignal,
     logs,
     marketData,
+    marketCondition, // ✅ 시장 조건 노출
     monitoringStats,
     selectedCoins,
     tradingMode,
@@ -983,7 +843,6 @@ export const usePaperTrading = (
     toggleTestMode,
     operationMode,
     setOperationMode,
-    getOperationStatus,
     startPaperTrading,
     stopPaperTrading,
     updatePortfolio,
@@ -991,9 +850,14 @@ export const usePaperTrading = (
     addLog,
     selectedCoinsCount: selectedCoins.length,
     hasSelectedCoins: selectedCoins.length > 0,
-    // 개발자 전용 함수들
-    isDevelopment,
+
+    // ✅ 새로운 기능들
+    refreshMarketCondition: updateMarketCondition,
+    coinSettings,
     executeImmediateBatch,
+
+    // 개발자 전용
+    isDevelopment,
   };
 };
 

@@ -1,405 +1,493 @@
-// src/components/features/testing/TradingSettings.jsx - 완전 수정 버전
+// src/components/features/trading/TradingSettings.jsx - 차등 배분 설정 지원
 
 import React, { useState, useEffect } from "react";
 import {
-  ChevronDownIcon,
-  ChevronUpIcon,
-  CogIcon,
-  TrendingUpIcon,
-  TrendingDownIcon,
-  PieChartIcon,
-  UsersIcon,
+  ChevronDownIcon, ChevronUpIcon, CogIcon, PieChartIcon,
+  ClockIcon, TrendingUpIcon, NewspaperIcon, BarChart3Icon
 } from "lucide-react";
 
-const TradingSettings = ({ settings, onChange, testMode }) => { // ✅ onChange로 수정
+const TradingSettings = ({ settings, onChange, testMode, marketCondition = null }) => {
   const [localSettings, setLocalSettings] = useState({
-    buyThreshold: -1.8,
+    // 기존 설정
+    buyThreshold: -1.5,
     sellThreshold: 2.0,
-    rsiOversold: 30,
-    rsiOverbought: 70,
-    volumeThreshold: 1.5,
-    minScore: 7.5,
-    portfolioStrategy: "dynamic",
+    rsiOversold: 35,
+    rsiOverbought: 65,
+    volumeThreshold: 1.2,
+    minScore: 6.5,
     maxCoinsToTrade: 8,
     reserveCashRatio: 0.15,
-    rebalanceThreshold: 0.3,
     strategy: "balanced",
+
+    // ✅ 새로운 차등 배분 설정
+    tierBasedAllocation: true,
+    tier1Allocation: 0.55, // BTC, ETH - 55%
+    tier2Allocation: 0.30, // 상위 알트코인 - 30%
+    tier3Allocation: 0.15, // 나머지 - 15%
+
+    // ✅ 유연한 대기시간 설정
+    flexibleWaitTime: true,
+    baseWaitTime: 120, // 기본 2시간
+    crashBuyWaitTime: 10, // 급락 시 10분
+    dipBuyWaitTime: 60, // 하락 시 1시간
+
+    // ✅ 뉴스 기반 조정 설정
+    newsBasedAdjustment: true,
+    newsPositiveMultiplier: 1.3,
+    newsNegativeMultiplier: 0.7,
+    newsAdjustmentDuration: 24,
+
     ...settings,
   });
 
   const [isExpanded, setIsExpanded] = useState(false);
-  const [activeSection, setActiveSection] = useState("basic");
+  const [activeSection, setActiveSection] = useState("allocation");
 
   useEffect(() => {
     setLocalSettings((prev) => ({ ...prev, ...settings }));
   }, [settings]);
 
-  // ✅ 실전형 프리셋 (현재 시장에 맞게 조정)
+  // ✅ 시장 상황별 프리셋
   const presetStrategies = {
     conservative: {
-      buyThreshold: -2.0, // 2% 하락 시 매수
-      sellThreshold: 1.5, // 1.5% 상승 시 매도
-      rsiOversold: 25, // 더 보수적
-      rsiOverbought: 75,
-      minScore: 7.0, // 높은 점수 요구
-      maxCoinsToTrade: 5,
-      reserveCashRatio: 0.30, // 현금 30% 보유
+      tier1Allocation: 0.70, // BTC/ETH 70%
+      tier2Allocation: 0.25, // 알트 25%
+      tier3Allocation: 0.05, // 기타 5%
+      reserveCashRatio: 0.25,
+      minScore: 7.5,
+      baseWaitTime: 180,
       strategy: "conservative"
     },
     balanced: {
-      buyThreshold: -1.2, // 1.2% 하락 시 매수
-      sellThreshold: 1.8, // 1.8% 상승 시 매도
-      rsiOversold: 30,
-      rsiOverbought: 70,
-      minScore: 6.0, // 적당한 점수
-      maxCoinsToTrade: 8,
-      reserveCashRatio: 0.20, // 현금 20% 보유
+      tier1Allocation: 0.55, // BTC/ETH 55%
+      tier2Allocation: 0.30, // 알트 30%
+      tier3Allocation: 0.15, // 기타 15%
+      reserveCashRatio: 0.15,
+      minScore: 6.5,
+      baseWaitTime: 120,
       strategy: "balanced"
     },
     aggressive: {
-      buyThreshold: -0.8, // 0.8% 하락만으로도 매수
-      sellThreshold: 2.2, // 2.2% 상승 시 매도
-      rsiOversold: 35, // 더 공격적
-      rsiOverbought: 65,
-      minScore: 5.0, // 낮은 점수로도 거래
-      maxCoinsToTrade: 12,
-      reserveCashRatio: 0.10, // 현금 10%만 보유
+      tier1Allocation: 0.40, // BTC/ETH 40%
+      tier2Allocation: 0.35, // 알트 35%
+      tier3Allocation: 0.25, // 기타 25%
+      reserveCashRatio: 0.10,
+      minScore: 5.5,
+      baseWaitTime: 90,
       strategy: "aggressive"
-    },
-    // ✅ 테스트용 추가
-    testing: {
-      buyThreshold: -0.3, // 매우 관대
-      sellThreshold: 0.8,
-      rsiOversold: 45,
-      rsiOverbought: 60,
-      minScore: 4.0, // 매우 낮은 점수
-      maxCoinsToTrade: 15,
-      reserveCashRatio: 0.05,
-      strategy: "testing"
     }
   };
 
   const handleChange = (key, value) => {
     const newSettings = { ...localSettings, [key]: value };
     setLocalSettings(newSettings);
-    onChange(newSettings); // ✅ onChange로 수정
+    onChange(newSettings);
   };
 
   const applyPreset = (presetName) => {
     const preset = presetStrategies[presetName];
     const newSettings = { ...localSettings, ...preset };
     setLocalSettings(newSettings);
-    onChange(newSettings); // ✅ onChange로 수정
+    onChange(newSettings);
     console.log(`🔧 ${presetName} 전략 적용:`, preset);
   };
 
-  // ✅ 동적 포트폴리오 계산 미리보기
+  // ✅ 포트폴리오 미리보기 계산
   const getPortfolioPreview = () => {
-    const investableRatio = 1 - localSettings.reserveCashRatio;
-    const positionSizePerCoin = investableRatio / localSettings.maxCoinsToTrade;
+    const totalAllocation = localSettings.tier1Allocation +
+      localSettings.tier2Allocation +
+      localSettings.tier3Allocation;
+    const cashRatio = localSettings.reserveCashRatio;
+    const investableRatio = 1 - cashRatio;
 
     return {
-      investableRatio,
-      positionSizePerCoin,
-      investableAmount: investableRatio * 1840000,
-      reserveAmount: localSettings.reserveCashRatio * 1840000,
-      positionAmountPerCoin: positionSizePerCoin * 1840000,
+      tier1Amount: localSettings.tier1Allocation * 1840000,
+      tier2Amount: localSettings.tier2Allocation * 1840000,
+      tier3Amount: localSettings.tier3Allocation * 1840000,
+      cashAmount: cashRatio * 1840000,
+      totalAllocation,
+      isValid: totalAllocation + cashRatio <= 1.0,
     };
   };
 
   const preview = getPortfolioPreview();
 
+  // ✅ 시장 조건 경고
+  const getMarketWarnings = () => {
+    if (!marketCondition) return [];
+
+    const warnings = [];
+
+    if (marketCondition.riskLevel >= 4) {
+      warnings.push("⚠️ 고위험 시장 - TIER1 비중 증대 권장");
+    }
+
+    if (marketCondition.volatility === 'extreme') {
+      warnings.push("🌊 극도 변동성 - 현금 비중 25% 이상 권장");
+    }
+
+    if (!marketCondition.isBuyableMarket) {
+      warnings.push("🚫 매수 부적절 시장 - 관망 모드 권장");
+    }
+
+    return warnings;
+  };
+
+  const sections = [
+    { id: 'allocation', name: '포트폴리오 배분', icon: PieChartIcon },
+    { id: 'timing', name: '거래 타이밍', icon: ClockIcon },
+    { id: 'news', name: '뉴스 연동', icon: NewspaperIcon },
+    { id: 'technical', name: '기술적 설정', icon: BarChart3Icon },
+  ];
+
   return (
-    <div className="trading-settings bg-white rounded-lg border border-gray-200">
-      {/* 헤더 */}
-      <div
-        className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50"
-        onClick={() => setIsExpanded(!isExpanded)}
-      >
-        <div className="flex items-center gap-3">
-          <CogIcon className="w-5 h-5 text-gray-600" />
-          <div>
-            <h3 className="font-medium text-gray-900">거래 설정</h3>
-            <p className="text-sm text-gray-600">
-              📊 {localSettings.maxCoinsToTrade}개 코인 ×{" "}
-              {(preview.positionSizePerCoin * 100).toFixed(1)}% + 예비현금{" "}
-              {localSettings.reserveCashRatio * 100}% | 매수{" "}
-              {localSettings.buyThreshold}% | 매도{" "}
-              {localSettings.sellThreshold}%
-            </p>
-          </div>
+    <div className="bg-white rounded-lg shadow-sm border p-4">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center space-x-2">
+          <CogIcon className="w-5 h-5 text-blue-500" />
+          <h3 className="text-lg font-semibold">거래 설정</h3>
+          {marketCondition && (
+            <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+              시장분석 연동
+            </span>
+          )}
         </div>
-        {isExpanded ? (
-          <ChevronUpIcon className="w-5 h-5 text-gray-400" />
-        ) : (
-          <ChevronDownIcon className="w-5 h-5 text-gray-400" />
-        )}
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="p-2 hover:bg-gray-100 rounded"
+        >
+          {isExpanded ? <ChevronUpIcon className="w-5 h-5" /> : <ChevronDownIcon className="w-5 h-5" />}
+        </button>
       </div>
 
-      {/* 설정 내용 */}
+      {/* 시장 경고 */}
+      {getMarketWarnings().length > 0 && (
+        <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded">
+          {getMarketWarnings().map((warning, idx) => (
+            <div key={idx} className="text-sm text-yellow-800">{warning}</div>
+          ))}
+        </div>
+      )}
+
+      {/* 전략 프리셋 */}
+      <div className="mb-4">
+        <div className="flex space-x-2">
+          {Object.keys(presetStrategies).map((preset) => (
+            <button
+              key={preset}
+              onClick={() => applyPreset(preset)}
+              className={`px-3 py-1 text-sm rounded ${localSettings.strategy === preset
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+            >
+              {preset === 'conservative' ? '보수적' : preset === 'balanced' ? '균형' : '공격적'}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {isExpanded && (
-        <div className="border-t border-gray-200">
-          {/* 프리셋 전략 */}
-          <div className="p-4 bg-gray-50">
-            <h4 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
-              <UsersIcon className="w-4 h-4" />
-              투자 성향
-            </h4>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              {Object.entries(presetStrategies).map(([key, preset]) => (
-                <button
-                  key={key}
-                  onClick={() => applyPreset(key)}
-                  className={`p-3 rounded-lg text-sm font-medium transition-all ${localSettings.strategy === key
-                      ? "bg-blue-600 text-white"
-                      : "bg-white text-gray-700 hover:bg-blue-50 border border-gray-200"
-                    }`}
-                >
-                  {key === "conservative" && "보수적"}
-                  {key === "balanced" && "균형"}
-                  {key === "aggressive" && "공격적"}
-                  {key === "testing" && "테스트"}
-                </button>
-              ))}
-            </div>
-
-            <p className="text-xs text-gray-500 mt-2">
-              💡 지표 기반으로 자동 리밸런싱됩니다
-            </p>
-          </div>
-
-          {/* 탭 네비게이션 */}
-          <div className="flex border-b border-gray-200">
-            {[
-              { key: "basic", label: "기본 설정", icon: <CogIcon className="w-4 h-4" /> },
-              { key: "advanced", label: "고급 설정", icon: <TrendingUpIcon className="w-4 h-4" /> },
-              { key: "portfolio", label: "포트폴리오", icon: <PieChartIcon className="w-4 h-4" /> },
-            ].map(({ key, label, icon }) => (
+        <>
+          {/* 섹션 탭 */}
+          <div className="flex space-x-1 mb-4">
+            {sections.map((section) => (
               <button
-                key={key}
-                onClick={() => setActiveSection(key)}
-                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${activeSection === key
-                    ? "text-blue-600 border-b-2 border-blue-600 bg-blue-50"
-                    : "text-gray-600 hover:text-gray-900"
+                key={section.id}
+                onClick={() => setActiveSection(section.id)}
+                className={`flex items-center space-x-1 px-3 py-2 text-sm rounded ${activeSection === section.id
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'text-gray-600 hover:bg-gray-100'
                   }`}
               >
-                {icon}
-                {label}
+                <section.icon className="w-4 h-4" />
+                <span>{section.name}</span>
               </button>
             ))}
           </div>
 
-          {/* 설정 패널 */}
-          <div className="p-4 space-y-6">
-            {activeSection === "basic" && (
-              <div className="space-y-4">
-                {/* 매수 임계값 */}
+          {/* 포트폴리오 배분 섹션 */}
+          {activeSection === 'allocation' && (
+            <div className="space-y-4">
+              <h4 className="font-medium text-gray-900">📊 차등 포트폴리오 배분</h4>
+
+              {/* Tier 배분 설정 */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    매수 임계값 ({localSettings.buyThreshold}%)
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    TIER1 (BTC, ETH) - {(localSettings.tier1Allocation * 100).toFixed(0)}%
                   </label>
                   <input
                     type="range"
-                    min="-3"
-                    max="0"
-                    step="0.1"
-                    value={localSettings.buyThreshold}
-                    onChange={(e) => handleChange("buyThreshold", parseFloat(e.target.value))}
+                    min="0.3"
+                    max="0.7"
+                    step="0.05"
+                    value={localSettings.tier1Allocation}
+                    onChange={(e) => handleChange('tier1Allocation', parseFloat(e.target.value))}
                     className="w-full"
                   />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>-3% (공격적)</span>
-                    <span>0% (보수적)</span>
+                  <div className="text-xs text-gray-500">
+                    약 {preview.tier1Amount.toLocaleString()}원
                   </div>
                 </div>
 
-                {/* 매도 임계값 */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    매도 임계값 (+{localSettings.sellThreshold}%)
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    TIER2 (상위 알트) - {(localSettings.tier2Allocation * 100).toFixed(0)}%
                   </label>
                   <input
                     type="range"
-                    min="0.5"
-                    max="3"
-                    step="0.1"
-                    value={localSettings.sellThreshold}
-                    onChange={(e) => handleChange("sellThreshold", parseFloat(e.target.value))}
+                    min="0.2"
+                    max="0.4"
+                    step="0.05"
+                    value={localSettings.tier2Allocation}
+                    onChange={(e) => handleChange('tier2Allocation', parseFloat(e.target.value))}
                     className="w-full"
                   />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>0.5% (공격적)</span>
-                    <span>3% (보수적)</span>
+                  <div className="text-xs text-gray-500">
+                    약 {preview.tier2Amount.toLocaleString()}원
                   </div>
                 </div>
 
-                {/* 최소 점수 */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    최소 신호 점수 ({localSettings.minScore})
-                  </label>
-                  <input
-                    type="range"
-                    min="3"
-                    max="8"
-                    step="0.1"
-                    value={localSettings.minScore}
-                    onChange={(e) => handleChange("minScore", parseFloat(e.target.value))}
-                    className="w-full"
-                  />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>3 (관대함)</span>
-                    <span>8 (엄격함)</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeSection === "advanced" && (
-              <div className="space-y-4">
-                {/* RSI 설정 */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      RSI 과매도 ({localSettings.rsiOversold})
-                    </label>
-                    <input
-                      type="range"
-                      min="20"
-                      max="40"
-                      step="1"
-                      value={localSettings.rsiOversold}
-                      onChange={(e) => handleChange("rsiOversold", parseInt(e.target.value))}
-                      className="w-full"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      RSI 과매수 ({localSettings.rsiOverbought})
-                    </label>
-                    <input
-                      type="range"
-                      min="60"
-                      max="80"
-                      step="1"
-                      value={localSettings.rsiOverbought}
-                      onChange={(e) => handleChange("rsiOverbought", parseInt(e.target.value))}
-                      className="w-full"
-                    />
-                  </div>
-                </div>
-
-                {/* 볼륨 임계값 */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    볼륨 임계값 ({localSettings.volumeThreshold}x)
-                  </label>
-                  <input
-                    type="range"
-                    min="1"
-                    max="3"
-                    step="0.1"
-                    value={localSettings.volumeThreshold}
-                    onChange={(e) => handleChange("volumeThreshold", parseFloat(e.target.value))}
-                    className="w-full"
-                  />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>1x (낮음)</span>
-                    <span>3x (높음)</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeSection === "portfolio" && (
-              <div className="space-y-4">
-                {/* 최대 거래 코인 수 */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    최대 거래 코인 수 ({localSettings.maxCoinsToTrade}개)
-                  </label>
-                  <input
-                    type="range"
-                    min="3"
-                    max="15"
-                    step="1"
-                    value={localSettings.maxCoinsToTrade}
-                    onChange={(e) => handleChange("maxCoinsToTrade", parseInt(e.target.value))}
-                    className="w-full"
-                  />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>3개 (집중)</span>
-                    <span>15개 (분산)</span>
-                  </div>
-                </div>
-
-                {/* 예비 현금 비율 */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    예비 현금 비율 ({(localSettings.reserveCashRatio * 100).toFixed(0)}%)
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    TIER3 (기타) - {(localSettings.tier3Allocation * 100).toFixed(0)}%
                   </label>
                   <input
                     type="range"
                     min="0.05"
-                    max="0.40"
+                    max="0.25"
                     step="0.05"
-                    value={localSettings.reserveCashRatio}
-                    onChange={(e) => handleChange("reserveCashRatio", parseFloat(e.target.value))}
+                    value={localSettings.tier3Allocation}
+                    onChange={(e) => handleChange('tier3Allocation', parseFloat(e.target.value))}
                     className="w-full"
                   />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>5% (공격적)</span>
-                    <span>40% (보수적)</span>
-                  </div>
-                </div>
-
-                {/* 포트폴리오 미리보기 */}
-                <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-                  <h5 className="font-medium text-blue-900 mb-2">💰 포트폴리오 시뮬레이션</h5>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <div className="text-blue-700">투자 가능 금액</div>
-                      <div className="font-bold text-blue-900">
-                        ₩{preview.investableAmount.toLocaleString()}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-blue-700">예비 현금</div>
-                      <div className="font-bold text-blue-900">
-                        ₩{preview.reserveAmount.toLocaleString()}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-blue-700">코인당 배분</div>
-                      <div className="font-bold text-blue-900">
-                        ₩{preview.positionAmountPerCoin.toLocaleString()}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-blue-700">분산도</div>
-                      <div className="font-bold text-blue-900">
-                        {(preview.positionSizePerCoin * 100).toFixed(1)}% × {localSettings.maxCoinsToTrade}개
-                      </div>
-                    </div>
+                  <div className="text-xs text-gray-500">
+                    약 {preview.tier3Amount.toLocaleString()}원
                   </div>
                 </div>
               </div>
-            )}
-          </div>
 
-          {/* 테스트 모드 알림 */}
-          {testMode && (
-            <div className="p-4 bg-yellow-50 border-t border-yellow-200">
-              <div className="flex items-center gap-2 text-yellow-800 text-sm">
-                <span>🧪</span>
-                <span className="font-medium">테스트 모드 활성</span>
-                <span className="text-yellow-600">- 더 관대한 거래 조건이 적용됩니다</span>
+              {/* 포트폴리오 미리보기 */}
+              <div className="p-3 bg-gray-50 rounded">
+                <div className="text-sm">
+                  <div>💰 총 투자: {(preview.totalAllocation * 100).toFixed(0)}%</div>
+                  <div>🏦 현금 보유: {(localSettings.reserveCashRatio * 100).toFixed(0)}% ({preview.cashAmount.toLocaleString()}원)</div>
+                  {!preview.isValid && (
+                    <div className="text-red-600 mt-1">⚠️ 총 배분이 100%를 초과합니다</div>
+                  )}
+                </div>
               </div>
             </div>
           )}
-        </div>
+
+          {/* 거래 타이밍 섹션 */}
+          {activeSection === 'timing' && (
+            <div className="space-y-4">
+              <h4 className="font-medium text-gray-900">⏰ 유연한 대기시간 설정</h4>
+
+              <div className="flex items-center space-x-2 mb-3">
+                <input
+                  type="checkbox"
+                  checked={localSettings.flexibleWaitTime}
+                  onChange={(e) => handleChange('flexibleWaitTime', e.target.checked)}
+                  className="rounded"
+                />
+                <label className="text-sm">시장 상황별 유연한 대기시간 적용</label>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    기본 대기시간: {localSettings.baseWaitTime}분
+                  </label>
+                  <input
+                    type="range"
+                    min="60"
+                    max="300"
+                    step="30"
+                    value={localSettings.baseWaitTime}
+                    onChange={(e) => handleChange('baseWaitTime', parseInt(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    급락 시: {localSettings.crashBuyWaitTime}분
+                  </label>
+                  <input
+                    type="range"
+                    min="5"
+                    max="60"
+                    step="5"
+                    value={localSettings.crashBuyWaitTime}
+                    onChange={(e) => handleChange('crashBuyWaitTime', parseInt(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    하락 시: {localSettings.dipBuyWaitTime}분
+                  </label>
+                  <input
+                    type="range"
+                    min="30"
+                    max="180"
+                    step="15"
+                    value={localSettings.dipBuyWaitTime}
+                    onChange={(e) => handleChange('dipBuyWaitTime', parseInt(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 bg-blue-50 rounded text-sm">
+                💡 <strong>유연 대기시간:</strong> 15% 이상 급락 시 {localSettings.crashBuyWaitTime}분,
+                5% 이상 하락 시 {localSettings.dipBuyWaitTime}분, 일반적인 경우 {localSettings.baseWaitTime}분 대기
+              </div>
+            </div>
+          )}
+
+          {/* 뉴스 연동 섹션 */}
+          {activeSection === 'news' && (
+            <div className="space-y-4">
+              <h4 className="font-medium text-gray-900">📰 뉴스 기반 비중 조정</h4>
+
+              <div className="flex items-center space-x-2 mb-3">
+                <input
+                  type="checkbox"
+                  checked={localSettings.newsBasedAdjustment}
+                  onChange={(e) => handleChange('newsBasedAdjustment', e.target.checked)}
+                  className="rounded"
+                />
+                <label className="text-sm">뉴스 점수에 따른 자동 비중 조정</label>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    긍정 뉴스 배수: {localSettings.newsPositiveMultiplier}x
+                  </label>
+                  <input
+                    type="range"
+                    min="1.0"
+                    max="2.0"
+                    step="0.1"
+                    value={localSettings.newsPositiveMultiplier}
+                    onChange={(e) => handleChange('newsPositiveMultiplier', parseFloat(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    부정 뉴스 배수: {localSettings.newsNegativeMultiplier}x
+                  </label>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="1.0"
+                    step="0.1"
+                    value={localSettings.newsNegativeMultiplier}
+                    onChange={(e) => handleChange('newsNegativeMultiplier', parseFloat(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  뉴스 조정 지속시간: {localSettings.newsAdjustmentDuration}시간
+                </label>
+                <input
+                  type="range"
+                  min="6"
+                  max="72"
+                  step="6"
+                  value={localSettings.newsAdjustmentDuration}
+                  onChange={(e) => handleChange('newsAdjustmentDuration', parseInt(e.target.value))}
+                  className="w-full"
+                />
+              </div>
+
+              <div className="p-3 bg-green-50 rounded text-sm">
+                🔄 <strong>뉴스 조정:</strong> 긍정 뉴스 시 비중 {((localSettings.newsPositiveMultiplier - 1) * 100).toFixed(0)}% 증가,
+                부정 뉴스 시 {((1 - localSettings.newsNegativeMultiplier) * 100).toFixed(0)}% 감소하여 {localSettings.newsAdjustmentDuration}시간 유지
+              </div>
+            </div>
+          )}
+
+          {/* 기술적 설정 섹션 */}
+          {activeSection === 'technical' && (
+            <div className="space-y-4">
+              <h4 className="font-medium text-gray-900">📈 기술적 분석 설정</h4>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    최소 신호 점수: {localSettings.minScore}
+                  </label>
+                  <input
+                    type="range"
+                    min="4.0"
+                    max="8.0"
+                    step="0.5"
+                    value={localSettings.minScore}
+                    onChange={(e) => handleChange('minScore', parseFloat(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    최대 포지션 수: {localSettings.maxCoinsToTrade}개
+                  </label>
+                  <input
+                    type="range"
+                    min="4"
+                    max="12"
+                    step="1"
+                    value={localSettings.maxCoinsToTrade}
+                    onChange={(e) => handleChange('maxCoinsToTrade', parseInt(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    RSI 과매도: {localSettings.rsiOversold}
+                  </label>
+                  <input
+                    type="range"
+                    min="20"
+                    max="40"
+                    step="5"
+                    value={localSettings.rsiOversold}
+                    onChange={(e) => handleChange('rsiOversold', parseInt(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    RSI 과매수: {localSettings.rsiOverbought}
+                  </label>
+                  <input
+                    type="range"
+                    min="60"
+                    max="80"
+                    step="5"
+                    value={localSettings.rsiOverbought}
+                    onChange={(e) => handleChange('rsiOverbought', parseInt(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
