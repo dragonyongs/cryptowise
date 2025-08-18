@@ -1,152 +1,282 @@
 // src/services/analysis/hybridSignalGenerator.js
-import { newsPreloader } from "../news/newsPreloader.js";
-import { technicalAnalysis } from "./technicalAnalysis";
+import fundamentalAnalysisService from "./fundamentalAnalysis.js";
+import marketCorrelationService from "./marketCorrelation.js";
+import sentimentAnalysisService from "../market/sentimentAnalysis.js";
 
 class HybridSignalGenerator {
   constructor() {
-    this.newsPreloader = newsPreloader;
-    // 앱 시작 시 뉴스 프리로더 시작
-    this.newsPreloader.startPreloading();
-
-    // 앱 종료 시 정리
-    if (typeof window !== "undefined") {
-      window.addEventListener("beforeunload", () => {
-        this.newsPreloader.stopPreloading();
-      });
-    }
+    this.signalHistory = [];
+    this.maxHistoryLength = 100;
   }
 
-  async generateSignal(marketData, technicalAnalysis) {
+  async generateEnhancedSignal(marketData) {
+    const symbol = marketData.code.replace("KRW-", "");
+
     try {
-      const symbol = marketData.code?.replace("KRW-", "") || marketData.symbol;
-      const price = marketData.trade_price || marketData.price;
-      const changePercent =
-        (marketData.signed_change_rate || marketData.change_rate || 0) * 100;
+      // 모든 분석 서비스 병렬 실행
+      const [
+        technicalScore,
+        fundamentalScore,
+        correlationScore,
+        sentimentScore,
+      ] = await Promise.all([
+        this.calculateTechnicalScore(marketData),
+        fundamentalAnalysisService.analyzeFundamentals(symbol),
+        marketCorrelationService.analyzeBTCImpact(),
+        sentimentAnalysisService.analyzeSentiment(),
+      ]);
 
-      // 1단계: 캐시에서 뉴스 점수 즉시 가져오기
-      const newsAnalysis = this.newsPreloader.getNewsScore(symbol);
+      // 소셜 분석과 온체인 분석은 선택사항 (API 제한 고려)
+      const socialScore = { socialScore: 5 }; // 기본값
+      const onChainScore = { onChainScore: 5 }; // 기본값
 
-      // 2단계: 복합 점수 계산
-      const compositeScore = this.calculateCompositeScore(
-        technicalAnalysis,
-        newsAnalysis,
-        changePercent
-      );
+      // 가중 평균 계산
+      const totalScore = this.calculateWeightedScore({
+        technical: technicalScore.score,
+        fundamental: fundamentalScore.fundamentalScore,
+        correlation: correlationScore.adjustmentFactor,
+        sentiment: sentimentScore.sentimentMultiplier,
+        social: socialScore.socialScore,
+        onchain: onChainScore.onChainScore,
+      });
 
-      // 3단계: 신호 생성
-      return this.generateTradingSignal(
+      const signal = {
         symbol,
-        price,
-        changePercent,
-        compositeScore,
-        technicalAnalysis,
-        newsAnalysis
-      );
+        totalScore,
+        confidence: this.calculateConfidence(totalScore, {
+          technicalScore,
+          fundamentalScore,
+          correlationScore,
+          sentimentScore,
+        }),
+        action: this.determineAction(
+          totalScore,
+          sentimentScore,
+          correlationScore
+        ),
+        breakdown: {
+          technical: technicalScore.score,
+          fundamental: fundamentalScore.fundamentalScore,
+          correlation: correlationScore.adjustmentFactor,
+          sentiment: sentimentScore.sentimentMultiplier,
+          social: socialScore.socialScore,
+          onchain: onChainScore.onChainScore,
+        },
+        reason: this.generateDetailedReason({
+          totalScore,
+          technicalScore,
+          fundamentalScore,
+          sentimentScore,
+          correlationScore,
+        }),
+        timestamp: Date.now(),
+        marketContext: {
+          btcDominance: correlationScore.dominance,
+          marketPhase: correlationScore.marketPhase,
+          fearGreed: sentimentScore.fearGreedIndex,
+          altSeasonProb: correlationScore.altSeasonProbability,
+        },
+      };
+
+      // 신호 히스토리 저장
+      this.addToHistory(signal);
+
+      return signal;
     } catch (error) {
-      console.error(`신호 생성 오류 (${marketData.code}):`, error);
-      return null;
+      console.error("Enhanced signal generation failed:", error);
+      return this.getDefaultSignal(symbol);
     }
   }
 
-  calculateCompositeScore(technicalAnalysis, newsAnalysis, changePercent) {
+  calculateWeightedScore(scores) {
     const weights = {
-      technical: 0.65, // 기술적 분석 비중 높임
-      news: 0.25, // 뉴스 비중
-      momentum: 0.1, // 가격 모멘텀
+      technical: 0.4, // 40% - 기술적 분석
+      fundamental: 0.25, // 25% - 펀더멘탈 분석
+      correlation: 0.15, // 15% - 시장 상관관계
+      sentiment: 0.1, // 10% - 감정 분석
+      social: 0.05, // 5% - 소셜 분석
+      onchain: 0.05, // 5% - 온체인 분석
     };
 
-    // 기술적 점수
-    const techScore = technicalAnalysis.totalScore || 5.0;
-
-    // 뉴스 점수
-    const newsScore = newsAnalysis.score;
-
-    // 모멘텀 점수 (큰 변동일수록 높은 점수)
-    const momentumScore = 5.0 + Math.min(Math.abs(changePercent) * 0.5, 5.0);
-
-    // 가중평균 계산
-    const baseScore =
-      techScore * weights.technical +
-      newsScore * weights.news +
-      momentumScore * weights.momentum;
-
-    // 뉴스 강도에 따른 보정
-    let multiplier = 1.0;
-    if (newsAnalysis.strength === "very_positive" && techScore >= 7.0) {
-      multiplier = 1.2;
-    } else if (newsAnalysis.strength === "very_negative") {
-      multiplier = 0.8;
-    } else if (newsAnalysis.strength === "positive") {
-      multiplier = 1.1;
-    } else if (newsAnalysis.strength === "negative") {
-      multiplier = 0.9;
-    }
-
-    return Math.min(baseScore * multiplier, 10.0);
+    return (
+      scores.technical * weights.technical +
+      scores.fundamental * weights.fundamental +
+      scores.correlation * weights.correlation +
+      scores.sentiment * weights.sentiment +
+      scores.social * weights.social +
+      scores.onchain * weights.onchain
+    );
   }
 
-  generateTradingSignal(
-    symbol,
-    price,
-    changePercent,
-    compositeScore,
-    techAnalysis,
-    newsAnalysis
-  ) {
-    let signalType = "HOLD";
-    let confidence = "medium";
-    let reasoning = [];
+  async calculateTechnicalScore(marketData) {
+    // 기존 기술적 분석 로직 (RSI, MACD, 볼린저 밴드 등)
+    try {
+      const price = parseFloat(marketData.trade_price);
+      const volume = parseFloat(marketData.candle_acc_trade_volume);
 
-    // 매수 신호 조건
-    if (compositeScore >= 7.5 && changePercent <= -1.5) {
-      signalType = "BUY";
-      confidence = compositeScore >= 8.5 ? "high" : "medium";
+      // 간단한 기술적 분석 (실제로는 더 복잡한 지표 계산)
+      let score = 5; // 기본 점수
 
-      reasoning.push(`기술점수 ${techAnalysis.totalScore?.toFixed(1)}`);
-      reasoning.push(
-        `뉴스점수 ${newsAnalysis.score.toFixed(1)}(${newsAnalysis.strength})`
-      );
-      reasoning.push(`변동률 ${changePercent.toFixed(2)}%`);
+      // 볼륨 분석
+      if (volume > marketData.prev_closing_price * 0.1) score += 1;
+
+      // 가격 모멘텀 분석
+      const priceChange =
+        (price - marketData.prev_closing_price) / marketData.prev_closing_price;
+      if (priceChange > 0.03) score += 2;
+      else if (priceChange > 0.01) score += 1;
+      else if (priceChange < -0.03) score -= 2;
+      else if (priceChange < -0.01) score -= 1;
+
+      return {
+        score: Math.max(0, Math.min(10, score)),
+        indicators: {
+          priceChange: Math.round(priceChange * 10000) / 100,
+          volume: volume,
+          momentum: priceChange > 0 ? "bullish" : "bearish",
+        },
+      };
+    } catch (error) {
+      console.error("Technical analysis failed:", error);
+      return { score: 5, indicators: {} };
     }
-    // 매도 신호 조건
-    else if (
-      compositeScore <= 3.5 ||
-      (changePercent >= 2.0 && compositeScore <= 5.0)
+  }
+
+  calculateConfidence(totalScore, analysisData) {
+    let confidence = 0.5; // 기본 신뢰도
+
+    // 점수가 극단적일수록 신뢰도 증가
+    const scoreDeviation = Math.abs(totalScore - 5) / 5;
+    confidence += scoreDeviation * 0.3;
+
+    // 여러 지표가 일치할 때 신뢰도 증가
+    const scores = [
+      analysisData.technicalScore.score,
+      analysisData.fundamentalScore.fundamentalScore,
+      analysisData.sentimentScore.sentimentMultiplier * 5,
+    ];
+
+    const avgScore =
+      scores.reduce((sum, score) => sum + score, 0) / scores.length;
+    const consistency =
+      1 -
+      scores.reduce((sum, score) => sum + Math.abs(score - avgScore), 0) /
+        scores.length /
+        10;
+
+    confidence += consistency * 0.2;
+
+    return Math.max(0.3, Math.min(0.95, confidence));
+  }
+
+  determineAction(totalScore, sentimentScore, correlationScore) {
+    let action = "HOLD";
+
+    // 기본 점수 기반 판단
+    if (totalScore >= 7.5) {
+      action = "STRONG_BUY";
+    } else if (totalScore >= 6.5) {
+      action = "BUY";
+    } else if (totalScore <= 2.5) {
+      action = "STRONG_SELL";
+    } else if (totalScore <= 3.5) {
+      action = "SELL";
+    }
+
+    // 감정 지수에 따른 조정
+    if (sentimentScore.contrarian.buySignal && totalScore >= 5.5) {
+      action = action === "HOLD" ? "BUY" : action;
+    }
+
+    if (sentimentScore.contrarian.sellSignal && totalScore <= 4.5) {
+      action = action === "HOLD" ? "SELL" : action;
+    }
+
+    // 시장 상황에 따른 조정
+    if (
+      correlationScore.marketPhase === "accumulation" &&
+      action.includes("BUY")
     ) {
-      signalType = "SELL";
-      confidence = compositeScore <= 2.5 ? "high" : "medium";
-
-      reasoning.push(`기술점수 ${techAnalysis.totalScore?.toFixed(1)}`);
-      if (newsAnalysis.strength.includes("negative")) {
-        reasoning.push(`부정뉴스 ${newsAnalysis.score.toFixed(1)}`);
-      }
-      reasoning.push(`변동률 ${changePercent.toFixed(2)}%`);
+      // BTC 축적 단계에서는 매수 신호 약화
+      if (action === "STRONG_BUY") action = "BUY";
+      else if (action === "BUY") action = "HOLD";
     }
 
-    // 신호가 없으면 null 반환
-    if (signalType === "HOLD") {
-      return null;
+    if (correlationScore.marketPhase === "markup" && action.includes("BUY")) {
+      // 알트시즌에서는 매수 신호 강화
+      if (action === "BUY") action = "STRONG_BUY";
     }
 
+    return action;
+  }
+
+  generateDetailedReason(data) {
+    const reasons = [];
+
+    // 기술적 분석 이유
+    if (data.technicalScore.score >= 7) {
+      reasons.push("강력한 기술적 매수 신호");
+    } else if (data.technicalScore.score <= 3) {
+      reasons.push("약한 기술적 지표");
+    }
+
+    // 펀더멘탈 이유
+    if (data.fundamentalScore.fundamentalScore >= 7) {
+      reasons.push("우수한 펀더멘탈");
+    } else if (data.fundamentalScore.fundamentalScore <= 4) {
+      reasons.push("약한 펀더멘탈");
+    }
+
+    // 감정 지수 이유
+    if (data.sentimentScore.fearGreedIndex < 25) {
+      reasons.push("극공포 구간 - 역순환 매수 기회");
+    } else if (data.sentimentScore.fearGreedIndex > 75) {
+      reasons.push("극탐욕 구간 - 수익실현 고려");
+    }
+
+    // 시장 상황 이유
+    if (data.correlationScore.altSeasonProbability > 0.7) {
+      reasons.push("알트시즌 확률 높음");
+    }
+
+    return reasons.length > 0 ? reasons.join(", ") : "종합적 분석 결과";
+  }
+
+  addToHistory(signal) {
+    this.signalHistory.unshift(signal);
+    if (this.signalHistory.length > this.maxHistoryLength) {
+      this.signalHistory = this.signalHistory.slice(0, this.maxHistoryLength);
+    }
+  }
+
+  getSignalHistory(limit = 10) {
+    return this.signalHistory.slice(0, limit);
+  }
+
+  getDefaultSignal(symbol) {
     return {
       symbol,
-      type: signalType,
-      price,
-      compositeScore,
-      confidence,
-      reason: `${symbol} ${signalType} - ${reasoning.join(", ")} (복합:${compositeScore.toFixed(1)})`,
-      timestamp: new Date(),
-      changePercent,
-      technicalAnalysis,
-      newsAnalysis,
-      ready: true, // 모든 데이터 준비 완료
+      totalScore: 5,
+      confidence: 0.3,
+      action: "HOLD",
+      breakdown: {
+        technical: 5,
+        fundamental: 5,
+        correlation: 1.0,
+        sentiment: 1.0,
+        social: 5,
+        onchain: 5,
+      },
+      reason: "API 오류로 기본 신호 생성",
+      timestamp: Date.now(),
+      marketContext: {
+        btcDominance: 50,
+        marketPhase: "transition",
+        fearGreed: 50,
+        altSeasonProb: 0.5,
+      },
     };
-  }
-
-  // 캐시 상태 확인
-  getNewsStatus() {
-    return this.newsPreloader.getCacheStatus();
   }
 }
 
-export const hybridSignalGenerator = new HybridSignalGenerator();
+export default new HybridSignalGenerator();

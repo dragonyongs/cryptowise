@@ -5,7 +5,7 @@ import {
   ChartBarIcon,
   CpuChipIcon,
   ShieldCheckIcon,
-  LightBulbIcon,
+  Lightbulb,
   CurrencyDollarIcon,
   ArrowRightIcon,
   PlayIcon,
@@ -78,7 +78,7 @@ export default function LandingPage() {
     {
       title: "다차원 분석",
       description: "기술적 지표, 펀더멘탈, 감정 분석을 통한 종합적 투자 판단",
-      icon: LightBulbIcon,
+      icon: Lightbulb,
       stats: "95% 정확도",
     },
     {
@@ -281,11 +281,10 @@ export default function LandingPage() {
                         ${marketData.btc.toLocaleString()}
                       </div>
                       <div
-                        className={`text-sm font-medium ${
-                          marketData.trend.startsWith("+")
-                            ? "text-green-600"
-                            : "text-red-500"
-                        }`}
+                        className={`text-sm font-medium ${marketData.trend.startsWith("+")
+                          ? "text-green-600"
+                          : "text-red-500"
+                          }`}
                       >
                         {marketData.trend}
                       </div>
@@ -307,11 +306,10 @@ export default function LandingPage() {
                       <button
                         key={index}
                         onClick={() => setActiveFeature(index)}
-                        className={`flex-1 py-2 px-3 rounded-md text-xs font-medium transition-all ${
-                          activeFeature === index
-                            ? "bg-white text-gray-900 shadow-sm"
-                            : "text-gray-600 hover:text-gray-900"
-                        }`}
+                        className={`flex-1 py-2 px-3 rounded-md text-xs font-medium transition-all ${activeFeature === index
+                          ? "bg-white text-gray-900 shadow-sm"
+                          : "text-gray-600 hover:text-gray-900"
+                          }`}
                       >
                         {feature.title}
                       </button>
@@ -416,7 +414,7 @@ export default function LandingPage() {
                 <div className="text-xs text-gray-500 mt-1">즉시 반영</div>
               </div>
               <div className="text-center">
-                <LightBulbIcon className="w-8 h-8 mx-auto mb-3 text-gray-400" />
+                <Lightbulb className="w-8 h-8 mx-auto mb-3 text-gray-400" />
                 <div className="text-sm font-medium text-gray-900">
                   지속적 수익
                 </div>
