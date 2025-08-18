@@ -1,3 +1,5 @@
+// src/components/features/testing/PaperTrading.jsx - 완전 수정 버전
+
 import React, { useState } from "react";
 import { usePaperTrading } from "../../../hooks/usePaperTrading";
 import { formatCurrency, formatPercent } from "../../../utils/formatters";
@@ -20,32 +22,46 @@ import {
   BugIcon,
   ActivityIcon,
   PieChartIcon,
+  CalendarIcon,
+  RotateCcwIcon,
+  ZapIcon,
+  ArrowUpIcon,
+  ArrowDownIcon,
 } from "lucide-react";
 
-// Performance optimized log viewer
+// ✅ 성능 최적화된 로그 뷰어 (키 중복 방지)
 const LogViewer = React.memo(({ logs }) => (
-  <div className="h-64 sm:h-80 overflow-y-auto bg-slate-900 rounded-lg p-3 sm:p-4">
-    <div className="space-y-1 sm:space-y-2">
-      {logs.slice(0, 50).map((log) => (
-        <div
-          key={log.id}
-          className={`text-xs sm:text-sm p-2 sm:p-3 rounded-md ${
-            log.type === "success"
-              ? "bg-emerald-500/10 text-emerald-400 border-l-2 border-emerald-500"
-              : log.type === "error"
-                ? "bg-red-500/10 text-red-400 border-l-2 border-red-500"
+  <div className="bg-gray-50 rounded-lg p-4 h-80 overflow-y-auto font-mono text-sm">
+    {logs.length === 0 ? (
+      <div className="text-center text-gray-400 mt-8">
+        <ActivityIcon className="w-12 h-12 mx-auto mb-4 opacity-50" />
+        <p className="text-lg font-medium">로그가 없습니다</p>
+        <p className="text-sm">거래를 시작해보세요</p>
+      </div>
+    ) : (
+      <div className="space-y-1">
+        {logs.map((log) => (
+          <div
+            key={log.id} // ✅ 고유 ID 사용
+            className={`flex items-start gap-2 p-2 rounded text-xs ${log.type === "error"
+                ? "bg-red-100 text-red-800"
                 : log.type === "warning"
-                  ? "bg-amber-500/10 text-amber-400 border-l-2 border-amber-500"
-                  : "bg-slate-700/50 text-slate-300 border-l-2 border-slate-600"
-          }`}
-        >
-          <span className="font-mono text-xs text-slate-400">
-            [{log.timestamp}]
-          </span>{" "}
-          <span className="ml-1 sm:ml-2">{log.message}</span>
-        </div>
-      ))}
-    </div>
+                  ? "bg-yellow-100 text-yellow-800"
+                  : log.type === "success"
+                    ? "bg-green-100 text-green-800"
+                    : log.type === "debug"
+                      ? "bg-purple-100 text-purple-800"
+                      : "bg-blue-100 text-blue-800"
+              }`}
+          >
+            <span className="text-gray-500 shrink-0 w-20">
+              {log.timestamp}
+            </span>
+            <span className="flex-1">{log.message}</span>
+          </div>
+        ))}
+      </div>
+    )}
   </div>
 ));
 
@@ -53,786 +69,572 @@ const PaperTrading = () => {
   const {
     portfolio,
     isActive,
-    connectionStatus,
     isConnected,
-    reconnect,
+    connectionStatus,
     lastSignal,
     logs,
     monitoringStats,
+    selectedCoins,
     tradingMode,
     setTradingMode,
+    topCoinsLimit,
+    setTopCoinsLimit,
     tradingSettings,
     setTradingSettings,
+    testMode,
+    toggleTestMode,
+    operationMode,
+    setOperationMode,
+    getOperationStatus,
     startPaperTrading,
     stopPaperTrading,
-    resetPortfolio,
+    updatePortfolio,
+    reconnect,
+    selectedCoinsCount,
     hasSelectedCoins,
-    debugMode,
-    setDebugMode,
+    isDevelopment,
+    executeImmediateBatch, // ✅ 추가된 함수
   } = usePaperTrading();
 
-  const [activeTab, setActiveTab] = useState("portfolio");
+  const [showSettings, setShowSettings] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const handleStart = () => {
-    if (tradingMode === "selected" && !hasSelectedCoins) {
-      alert(
-        "관심코인 모드에서는 메인 화면에서 코인을 관심등록한 후 시작해주세요."
-      );
-      return;
-    }
-    startPaperTrading();
+  // ✅ 모드별 아이콘 및 설명
+  const getModeConfig = (mode) => {
+    const configs = {
+      websocket: {
+        icon: <WifiIcon className="w-4 h-4" />,
+        label: "실시간",
+        description: "WebSocket 실시간 데이터",
+        color: "text-blue-600",
+        bgColor: "bg-blue-100",
+      },
+      polling: {
+        icon: <RefreshCwIcon className="w-4 h-4" />,
+        label: "폴링",
+        description: "10초마다 API 호출",
+        color: "text-orange-600",
+        bgColor: "bg-orange-100",
+      },
+      scheduled: {
+        icon: <CalendarIcon className="w-4 h-4" />,
+        label: "스케줄",
+        description: "하루 5회 자동 실행",
+        color: "text-green-600",
+        bgColor: "bg-green-100",
+      },
+    };
+    return configs[mode] || configs.scheduled;
   };
 
-  const tabs = [
-    { id: "portfolio", label: "Portfolio", icon: PieChartIcon },
-    { id: "signals", label: "Signals", icon: TrendingUpIcon },
-    { id: "trades", label: "Trades", icon: BarChart3Icon },
-    { id: "logs", label: "Logs", icon: ActivityIcon },
-  ];
+  const currentModeConfig = getModeConfig(operationMode);
 
-  // Warning message for no selected coins in selected mode
-  if (tradingMode === "selected" && !hasSelectedCoins) {
-    return (
-      <div className="min-h-screen bg-slate-50 p-4 sm:p-6">
-        <div className="max-w-2xl mx-auto">
-          <div className="bg-white rounded-2xl p-6 sm:p-8 shadow-sm border border-slate-200">
-            <div className="text-center">
-              <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <HeartIcon className="w-8 h-8 text-amber-600" />
-              </div>
-              <h2 className="text-xl font-semibold text-slate-900 mb-2">
-                관심 코인이 선택되지 않았습니다
-              </h2>
-              <p className="text-slate-600 mb-6 leading-relaxed text-sm sm:text-base">
-                관심코인 모드에서는 메인 화면에서 코인을 먼저 관심등록해주세요.
-                <br className="hidden sm:block" />
-                또는 전체코인 모드로 변경하여 상위 코인들로 테스트할 수
-                있습니다.
+  return (
+    <div className="max-w-7xl mx-auto p-6 space-y-6">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">페이퍼 트레이딩</h1>
+          <p className="text-gray-600 mt-2">
+            가상 투자로 전략을 테스트해보세요 • 초기자본: ₩1,840,000
+          </p>
+        </div>
+
+        <div className="flex items-center gap-4">
+          {/* 개발자 전용 즉시 배치 버튼 */}
+          {isDevelopment && (
+            <button
+              onClick={executeImmediateBatch}
+              disabled={!isActive}
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2 text-sm"
+            >
+              <ZapIcon className="w-4 h-4" />
+              즉시 배치
+            </button>
+          )}
+
+          {/* 연결 상태 */}
+          <div className="flex items-center gap-2">
+            <ConnectionStatus
+              status={connectionStatus}
+              reconnectAttempts={0}
+            />
+            <span className={`px-2 py-1 rounded-full text-xs flex items-center gap-1 ${currentModeConfig.bgColor} ${currentModeConfig.color}`}>
+              {currentModeConfig.icon}
+              {currentModeConfig.label}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* 경고 메시지 */}
+      {tradingMode === "favorites" && !hasSelectedCoins && (
+        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg">
+          <div className="flex items-start">
+            <div className="ml-3">
+              <p className="text-sm text-yellow-800">
+                <strong>관심코인 모드</strong>에서는 메인 화면에서 코인을 먼저 관심등록해주세요.
               </p>
+              <p className="text-xs text-yellow-600 mt-1">
+                또는 <strong>전체코인 모드</strong>로 변경하여 상위 코인들로 테스트할 수 있습니다.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 컨트롤 패널 */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* 거래 모드 */}
+          <div className="space-y-4">
+            <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+              <GlobeIcon className="w-5 h-5" />
+              거래 모드
+            </h3>
+
+            <div className="space-y-2">
+              <label className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer">
+                <input
+                  type="radio"
+                  name="tradingMode"
+                  value="favorites"
+                  checked={tradingMode === "favorites"}
+                  onChange={(e) => setTradingMode(e.target.value)}
+                  className="text-blue-600"
+                />
+                <div className="flex items-center gap-2">
+                  <HeartIcon className="w-4 h-4 text-red-500" />
+                  <span className="font-medium">관심코인 ({selectedCoinsCount}개)</span>
+                </div>
+              </label>
+
+              <label className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer">
+                <input
+                  type="radio"
+                  name="tradingMode"
+                  value="top"
+                  checked={tradingMode === "top"}
+                  onChange={(e) => setTradingMode(e.target.value)}
+                  className="text-blue-600"
+                />
+                <div className="flex items-center gap-2">
+                  <BarChart3Icon className="w-4 h-4 text-blue-500" />
+                  <span className="font-medium">전체코인 상위 {topCoinsLimit}개</span>
+                </div>
+              </label>
+            </div>
+
+            {tradingMode === "top" && (
+              <div className="mt-3">
+                <input
+                  type="range"
+                  min="5"
+                  max="20"
+                  step="5"
+                  value={topCoinsLimit}
+                  onChange={(e) => setTopCoinsLimit(Number(e.target.value))}
+                  className="w-full"
+                />
+                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                  <span>5개</span>
+                  <span>20개</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 운영 모드 */}
+          <div className="space-y-4">
+            <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+              <ActivityIcon className="w-5 h-5" />
+              운영 모드
+            </h3>
+
+            <div className="space-y-2">
+              {["websocket", "polling", "scheduled"].map((mode) => {
+                const config = getModeConfig(mode);
+                return (
+                  <label
+                    key={mode}
+                    className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer"
+                  >
+                    <input
+                      type="radio"
+                      name="operationMode"
+                      value={mode}
+                      checked={operationMode === mode}
+                      onChange={(e) => setOperationMode(e.target.value)}
+                      className="text-blue-600"
+                    />
+                    <div className="flex items-center gap-2">
+                      {config.icon}
+                      <div>
+                        <div className="font-medium">{config.label}</div>
+                        <div className="text-xs text-gray-500">{config.description}</div>
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 컨트롤 버튼들 */}
+          <div className="space-y-4">
+            <h3 className="font-semibold text-gray-900">컨트롤</h3>
+
+            <div className="space-y-3">
               <button
-                onClick={() => setTradingMode("all")}
-                className="inline-flex items-center px-6 py-3 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors font-medium"
+                onClick={isActive ? stopPaperTrading : startPaperTrading}
+                disabled={tradingMode === "favorites" && !hasSelectedCoins}
+                className={`w-full px-4 py-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-all ${isActive
+                    ? "bg-red-600 hover:bg-red-700 text-white"
+                    : "bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  }`}
               >
-                <GlobeIcon className="w-4 h-4 mr-2" />
-                전체코인 모드로 변경
+                {isActive ? (
+                  <>
+                    <PauseIcon className="w-5 h-5" />
+                    중지
+                  </>
+                ) : (
+                  <>
+                    <PlayIcon className="w-5 h-5" />
+                    시작
+                  </>
+                )}
               </button>
+
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className="w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center justify-center gap-2"
+              >
+                <SettingsIcon className="w-4 h-4" />
+                거래 설정
+              </button>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={toggleTestMode}
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${testMode
+                      ? "bg-yellow-100 text-yellow-800 border border-yellow-300"
+                      : "bg-gray-100 text-gray-600 border border-gray-300"
+                    }`}
+                >
+                  <BugIcon className="w-4 h-4 inline mr-1" />
+                  {testMode ? "테스트" : "일반"}
+                </button>
+
+                <button
+                  onClick={reconnect}
+                  disabled={operationMode === "scheduled"}
+                  className="px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                >
+                  <RefreshCwIcon className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </div>
-    );
-  }
 
-  return (
-    <div className="min-h-screen bg-slate-50 p-4 sm:p-6">
-      <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
-        {/* Header */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6">
-          <div className="space-y-4 lg:space-y-6">
-            {/* Title Section */}
-            <div className="text-center lg:text-left">
-              <h1 className="text-2xl lg:text-3xl font-bold text-slate-900 mb-1 sm:mb-2">
-                Paper Trading
-              </h1>
-              <p className="text-slate-600 text-sm sm:text-base">
-                가상 투자로 전략을 테스트해보세요 (초기자본: ₩1,840,000)
-              </p>
-              <ConnectionStatus
-                connectionStatus={connectionStatus}
-                onReconnect={reconnect}
-              />
+      {/* 거래 설정 패널 */}
+      {showSettings && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <TradingSettings
+            settings={tradingSettings}
+            onChange={setTradingSettings}
+            testMode={testMode}
+          />
+        </div>
+      )}
+
+      {/* 모니터링 통계 */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        {[
+          {
+            label: "데이터 수신",
+            value: monitoringStats.dataReceived,
+            icon: <ActivityIcon className="w-5 h-5" />,
+            color: "text-blue-600",
+          },
+          {
+            label: "신호 평가",
+            value: monitoringStats.signalsEvaluated,
+            icon: <EyeIcon className="w-5 h-5" />,
+            color: "text-purple-600",
+          },
+          {
+            label: "신호 생성",
+            value: monitoringStats.signalsGenerated,
+            icon: <ZapIcon className="w-5 h-5" />,
+            color: "text-yellow-600",
+          },
+          {
+            label: "거래 실행",
+            value: monitoringStats.tradesExecuted,
+            icon: <DollarSignIcon className="w-5 h-5" />,
+            color: "text-green-600",
+          },
+          {
+            label: "조건 만족",
+            value: monitoringStats.conditionsMet,
+            icon: <BarChart3Icon className="w-5 h-5" />,
+            color: "text-orange-600",
+          },
+          {
+            label: "마지막 활동",
+            value: monitoringStats.lastActivity || "-",
+            icon: <RotateCcwIcon className="w-5 h-5" />,
+            color: "text-gray-600",
+          },
+        ].map((stat, idx) => (
+          <div
+            key={idx}
+            className="bg-white rounded-lg border border-gray-200 p-4 text-center"
+          >
+            <div className={`flex items-center justify-center mb-2 ${stat.color}`}>
+              {stat.icon}
             </div>
+            <div className="text-2xl font-bold text-gray-900">{stat.value}</div>
+            <div className="text-sm text-gray-600">{stat.label}</div>
+          </div>
+        ))}
+      </div>
 
-            {/* ✅ 완전히 개선된 Controls Section */}
+      {/* 포트폴리오 & 로그 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* 포트폴리오 현황 */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <PieChartIcon className="w-5 h-5" />
+            포트폴리오 현황
+          </h3>
+
+          {portfolio ? (
             <div className="space-y-4">
-              {/* 첫 번째 줄: 거래 모드 선택 */}
-              <div className="flex justify-center lg:justify-start">
-                <div className="flex bg-slate-100 rounded-lg p-1 w-full max-w-sm lg:max-w-none lg:w-auto">
-                  <button
-                    onClick={() => setTradingMode("selected")}
-                    className={`flex-1 lg:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium transition-all ${
-                      tradingMode === "selected"
-                        ? "bg-white text-slate-900 shadow-sm"
-                        : "text-slate-600 hover:text-slate-900"
-                    }`}
-                  >
-                    <HeartIcon className="w-4 h-4" />
-                    <span>관심코인</span>
-                  </button>
-                  <button
-                    onClick={() => setTradingMode("all")}
-                    className={`flex-1 lg:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium transition-all ${
-                      tradingMode === "all"
-                        ? "bg-white text-slate-900 shadow-sm"
-                        : "text-slate-600 hover:text-slate-900"
-                    }`}
-                  >
-                    <GlobeIcon className="w-4 h-4" />
-                    <span>전체코인</span>
-                  </button>
+              <div className="grid grid-cols-3 gap-4 p-4 bg-gray-50 rounded-lg">
+                <div className="text-center">
+                  <div className="text-sm text-gray-600">총 자산</div>
+                  <div className="text-lg font-bold">
+                    {formatCurrency(portfolio.totalValue)}
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="text-sm text-gray-600">현금</div>
+                  <div className="text-lg font-bold">
+                    {formatCurrency(portfolio.krw)}
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="text-sm text-gray-600">수익률</div>
+                  <div className={`text-lg font-bold ${portfolio.totalReturn >= 0 ? "text-green-600" : "text-red-600"
+                    }`}>
+                    {formatPercent(portfolio.totalReturn)}
+                  </div>
                 </div>
               </div>
 
-              {/* 두 번째 줄: 상태 정보 */}
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                <div className="flex items-center justify-center sm:justify-start gap-4">
-                  {/* 연결 상태 */}
-                  <div className="flex items-center gap-2">
-                    <div
-                      className={`w-2 h-2 rounded-full ${
-                        isConnected
-                          ? "bg-emerald-500 animate-pulse"
-                          : "bg-red-500"
-                      }`}
-                    ></div>
-                    <span
-                      className={`text-sm font-medium ${
-                        isConnected ? "text-emerald-600" : "text-red-600"
-                      }`}
-                    >
-                      {isConnected ? "Connected" : "Disconnected"}
-                    </span>
-                  </div>
-
-                  {/* 통계 정보 */}
-                  <div className="flex items-center gap-4 text-xs text-slate-500">
-                    <span>수신: {monitoringStats.dataReceived}</span>
-                    <span>신호: {monitoringStats.signalsGenerated}</span>
-                    <span>거래: {monitoringStats.tradesExecuted}</span>
-                  </div>
-                </div>
-
-                {/* Debug 토글 */}
-                <label className="flex items-center gap-2 cursor-pointer justify-center sm:justify-end">
-                  <input
-                    type="checkbox"
-                    checked={debugMode}
-                    onChange={(e) => setDebugMode(e.target.checked)}
-                    className="w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500 focus:ring-2"
-                  />
-                  <BugIcon className="w-4 h-4 text-slate-500" />
-                  <span className="text-sm text-slate-600">Debug</span>
-                </label>
-              </div>
-
-              {/* 세 번째 줄: 액션 버튼들 */}
-              <div className="flex flex-col sm:flex-row gap-3 sm:justify-center lg:justify-start">
-                {/* 메인 버튼 그룹 */}
-                <div className="flex gap-3">
-                  {isActive ? (
-                    <button
-                      onClick={stopPaperTrading}
-                      className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-6 py-3 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all duration-200 font-medium shadow-sm min-h-[48px]"
-                    >
-                      <PauseIcon className="w-5 h-5" />
-                      <span>Stop Trading</span>
-                    </button>
-                  ) : (
-                    <button
-                      onClick={handleStart}
-                      className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-6 py-3 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-all duration-200 font-medium shadow-sm min-h-[48px]"
-                    >
-                      <PlayIcon className="w-5 h-5" />
-                      <span>Start Trading</span>
-                    </button>
-                  )}
-
-                  <button
-                    onClick={resetPortfolio}
-                    className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-6 py-3 bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-all duration-200 font-medium shadow-sm min-h-[48px]"
-                  >
-                    <RefreshCwIcon className="w-5 h-5" />
-                    <span className="sm:hidden">Reset</span>
-                    <span className="hidden sm:inline">Reset Portfolio</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* 모바일 전용 포트폴리오 미리보기 */}
-            {portfolio && (
-              <div className="sm:hidden bg-gradient-to-r from-slate-50 to-slate-100 rounded-xl p-4">
-                <div className="grid grid-cols-3 gap-4 text-center">
-                  <div>
-                    <div className="text-lg font-bold text-slate-900">
-                      {formatCurrency(portfolio.krw)}
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1">보유현금</div>
-                  </div>
-                  <div>
-                    <div className="text-lg font-bold text-slate-900">
-                      {formatCurrency(portfolio.totalValue)}
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1">총자산</div>
-                  </div>
-                  <div>
-                    <div
-                      className={`text-lg font-bold ${
-                        portfolio.performance.totalReturn >= 0
-                          ? "text-emerald-600"
-                          : "text-red-600"
-                      }`}
-                    >
-                      {formatPercent(portfolio.performance.totalReturn)}
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1">수익률</div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Trading Settings */}
-        <TradingSettings
-          settings={tradingSettings}
-          onSettingsChange={setTradingSettings}
-        />
-
-        {/* Stats Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          {[
-            {
-              label: "데이터 수신",
-              value: monitoringStats.dataReceived,
-              icon: "📡",
-              color: "blue",
-            },
-            {
-              label: "신호 생성",
-              value: monitoringStats.signalsGenerated,
-              icon: "🎯",
-              color: "green",
-            },
-            {
-              label: "거래 실행",
-              value: monitoringStats.tradesExecuted,
-              icon: "💼",
-              color: "purple",
-            },
-            {
-              label: "마지막 활동",
-              value: monitoringStats.lastActivity || "-",
-              icon: "⏱️",
-              color: "gray",
-            },
-          ].map((stat, index) => (
-            <div
-              key={index}
-              className="bg-white rounded-xl p-4 sm:p-6 border border-slate-200 shadow-sm"
-            >
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0">
-                <div className="flex-1">
-                  <div className="text-slate-600 font-medium text-xs sm:text-sm mb-1">
-                    {stat.label}
-                  </div>
-                  <div className="text-lg sm:text-2xl font-bold text-slate-900">
-                    {typeof stat.value === "number"
-                      ? stat.value.toLocaleString()
-                      : stat.value}
-                  </div>
-                </div>
-                <div className="text-xl sm:text-2xl opacity-60 self-end sm:self-center">
-                  {stat.icon}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Tab Navigation */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="border-b border-slate-200">
-            <nav className="flex overflow-x-auto scrollbar-hide">
-              {tabs.map((tab) => {
-                const IconComponent = tab.icon;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`flex-shrink-0 flex items-center justify-center gap-2 py-4 px-6 font-medium text-sm transition-all relative min-w-[120px] whitespace-nowrap ${
-                      activeTab === tab.id
-                        ? "text-slate-900 bg-slate-50"
-                        : "text-slate-500 hover:text-slate-700 hover:bg-slate-25"
-                    }`}
-                  >
-                    {activeTab === tab.id && (
-                      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-slate-900" />
-                    )}
-                    <IconComponent className="w-4 h-4 flex-shrink-0" />
-                    <span className="hidden sm:inline">{tab.label}</span>
-                    <span className="sm:hidden text-xs">{tab.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
-          </div>
-
-          {/* Tab Content */}
-          <div className="p-4 sm:p-6">
-            {activeTab === "portfolio" && (
-              <div className="space-y-4 sm:space-y-6">
-                {/* Portfolio Summary */}
-                {portfolio && (
-                  <div className="hidden sm:grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="bg-slate-50 rounded-xl p-6 border border-slate-200">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-blue-500 rounded-lg flex items-center justify-center">
-                          <DollarSignIcon className="w-6 h-6 text-white" />
-                        </div>
-                        <div>
-                          <h3 className="font-medium text-slate-600 text-sm">
-                            보유 현금
-                          </h3>
-                          <p className="text-2xl font-bold text-slate-900">
-                            {formatCurrency(portfolio.krw)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-50 rounded-xl p-6 border border-slate-200">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-emerald-500 rounded-lg flex items-center justify-center">
-                          <TrendingUpIcon className="w-6 h-6 text-white" />
-                        </div>
-                        <div>
-                          <h3 className="font-medium text-slate-600 text-sm">
-                            총 자산
-                          </h3>
-                          <p className="text-2xl font-bold text-slate-900">
-                            {formatCurrency(portfolio.totalValue)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-50 rounded-xl p-6 border border-slate-200">
-                      <div className="flex items-center gap-4">
-                        <div
-                          className={`w-12 h-12 rounded-lg flex items-center justify-center ${
-                            portfolio.performance.totalReturn >= 0
-                              ? "bg-emerald-500"
-                              : "bg-red-500"
-                          }`}
-                        >
-                          {portfolio.performance.totalReturn >= 0 ? (
-                            <TrendingUpIcon className="w-6 h-6 text-white" />
-                          ) : (
-                            <TrendingDownIcon className="w-6 h-6 text-white" />
-                          )}
-                        </div>
-                        <div>
-                          <h3 className="font-medium text-slate-600 text-sm">
-                            수익률
-                          </h3>
-                          <p
-                            className={`text-2xl font-bold ${
-                              portfolio.performance.totalReturn >= 0
-                                ? "text-emerald-600"
-                                : "text-red-600"
-                            }`}
-                          >
-                            {formatPercent(portfolio.performance.totalReturn)}
-                          </p>
-                          <p className="text-sm text-slate-500">
-                            승률: {formatPercent(portfolio.performance.winRate)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Holdings Table - 완전 모바일 최적화 */}
-                {portfolio?.coins?.length > 0 && (
-                  <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                    <div className="px-4 sm:px-6 py-4 border-b border-slate-200">
-                      <h3 className="font-semibold text-slate-900">
-                        보유 코인
-                      </h3>
-                    </div>
-
-                    {/* 모바일: 카드 형태 */}
-                    <div className="block sm:hidden">
-                      {portfolio.coins.map((coin, index) => (
-                        <div
-                          key={index}
-                          className="border-b border-slate-200 last:border-b-0 p-4"
-                        >
-                          <div className="flex justify-between items-center mb-3">
-                            <h4 className="text-lg font-semibold text-slate-900">
-                              {coin.symbol}
-                            </h4>
-                            <span
-                              className={`px-3 py-1 rounded-full text-sm font-medium ${
-                                coin.profitRate >= 0
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-red-100 text-red-800"
-                              }`}
-                            >
+              {/* 보유 종목 */}
+              {portfolio.coins?.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="font-medium text-gray-800">보유 종목</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="text-left p-2 font-medium">종목</th>
+                          <th className="text-right p-2 font-medium">수량</th>
+                          <th className="text-right p-2 font-medium">평균단가</th>
+                          <th className="text-right p-2 font-medium">현재가치</th>
+                          <th className="text-right p-2 font-medium">수익률</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {portfolio.coins.map((coin) => (
+                          <tr key={coin.symbol} className="border-t">
+                            <td className="p-2 font-medium">{coin.symbol}</td>
+                            <td className="p-2 text-right">{coin.quantity.toFixed(8)}</td>
+                            <td className="p-2 text-right">{formatCurrency(coin.avgPrice)}</td>
+                            <td className="p-2 text-right">{formatCurrency(coin.currentValue)}</td>
+                            <td className={`p-2 text-right ${coin.profitRate >= 0 ? "text-green-600" : "text-red-600"
+                              }`}>
+                              {coin.profitRate >= 0 ? (
+                                <ArrowUpIcon className="w-3 h-3 inline mr-1" />
+                              ) : (
+                                <ArrowDownIcon className="w-3 h-3 inline mr-1" />
+                              )}
                               {formatPercent(coin.profitRate)}
-                            </span>
-                          </div>
-                          <div className="grid grid-cols-2 gap-3 text-sm">
-                            <div className="bg-slate-50 rounded-lg p-3">
-                              <div className="text-slate-500 text-xs">수량</div>
-                              <div className="font-medium text-slate-900 mt-1">
-                                {coin.quantity.toFixed(8)}
-                              </div>
-                            </div>
-                            <div className="bg-slate-50 rounded-lg p-3">
-                              <div className="text-slate-500 text-xs">
-                                평균단가
-                              </div>
-                              <div className="font-medium text-slate-900 mt-1">
-                                {formatCurrency(coin.avgPrice)}
-                              </div>
-                            </div>
-                            <div className="col-span-2 bg-slate-50 rounded-lg p-3">
-                              <div className="text-slate-500 text-xs">
-                                현재가치
-                              </div>
-                              <div className="font-bold text-slate-900 mt-1 text-lg">
-                                {formatCurrency(coin.currentValue)}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* 데스크톱: 테이블 */}
-                    <div className="hidden sm:block overflow-x-auto">
-                      <table className="w-full">
-                        <thead className="bg-slate-50">
-                          <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                              종목
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                              수량
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                              평균단가
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                              현재가치
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                              수익률
-                            </th>
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-200">
-                          {portfolio.coins.map((coin, index) => (
-                            <tr
-                              key={index}
-                              className="hover:bg-slate-50 transition-colors"
-                            >
-                              <td className="px-6 py-4 whitespace-nowrap font-medium text-slate-900">
-                                {coin.symbol}
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-slate-600">
-                                {coin.quantity.toFixed(8)}
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-slate-600">
-                                {formatCurrency(coin.avgPrice)}
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-slate-600">
-                                {formatCurrency(coin.currentValue)}
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap">
-                                <span
-                                  className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${
-                                    coin.profitRate >= 0
-                                      ? "bg-emerald-100 text-emerald-800"
-                                      : "bg-red-100 text-red-800"
-                                  }`}
-                                >
-                                  {formatPercent(coin.profitRate)}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeTab === "signals" && (
-              <div>
-                <h3 className="font-semibold text-slate-900 mb-4 sm:mb-6">
-                  최근 신호
-                </h3>
-                {lastSignal ? (
-                  <div className="space-y-4">
-                    <div
-                      className={`rounded-xl p-4 sm:p-6 border ${
-                        lastSignal.type === "BUY"
-                          ? "bg-emerald-50 border-emerald-200"
-                          : "bg-red-50 border-red-200"
-                      }`}
-                    >
-                      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-3">
-                            <h4 className="text-xl font-bold text-slate-900">
-                              {lastSignal.symbol}
-                            </h4>
-                            <span
-                              className={`px-3 py-1 rounded-md text-xs font-medium ${
-                                lastSignal.type === "BUY"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-red-100 text-red-800"
-                              }`}
-                            >
-                              {lastSignal.type}
-                            </span>
-                          </div>
-                          <p className="text-slate-700 mb-4 text-sm sm:text-base">
-                            {lastSignal.reason}
-                          </p>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-                            {[
-                              {
-                                label: "가격",
-                                value: formatCurrency(lastSignal.price),
-                              },
-                              {
-                                label: "점수",
-                                value: `${lastSignal.totalScore?.toFixed(1)}/10`,
-                              },
-                              {
-                                label: "변동률",
-                                value: `${lastSignal.changePercent?.toFixed(2)}%`,
-                                color:
-                                  lastSignal.changePercent >= 0
-                                    ? "text-emerald-600"
-                                    : "text-red-600",
-                              },
-                              {
-                                label: "전략",
-                                value:
-                                  lastSignal.settings?.strategy || "default",
-                              },
-                            ].map((item, idx) => (
-                              <div
-                                key={idx}
-                                className="bg-white rounded-lg p-3 border border-slate-200"
-                              >
-                                <div className="text-xs sm:text-sm text-slate-500 mb-1">
-                                  {item.label}
-                                </div>
-                                <div
-                                  className={`font-semibold text-sm sm:text-base ${item.color || "text-slate-900"}`}
-                                >
-                                  {item.value}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                        <span className="text-xs text-slate-500 sm:ml-4">
-                          {lastSignal.timestamp?.toLocaleTimeString()}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center py-12 sm:py-16">
-                    <div className="text-4xl mb-4">📊</div>
-                    <p className="text-slate-500">신호를 기다리는 중...</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeTab === "trades" && (
-              <div>
-                <h3 className="font-semibold text-slate-900 mb-4 sm:mb-6">
-                  거래 내역
-                </h3>
-                {portfolio?.recentTrades?.length > 0 ? (
-                  <>
-                    {/* 모바일: 카드 형태 */}
-                    <div className="block sm:hidden space-y-3">
-                      {portfolio.recentTrades
-                        .slice(0, 20)
-                        .map((trade, index) => (
-                          <div
-                            key={index}
-                            className="bg-white rounded-lg border border-slate-200 p-4"
-                          >
-                            <div className="flex justify-between items-center mb-3">
-                              <div className="flex items-center gap-2">
-                                <h4 className="font-semibold text-slate-900">
-                                  {trade.symbol}
-                                </h4>
-                                <span
-                                  className={`px-2 py-1 rounded text-xs font-medium ${
-                                    trade.action === "BUY"
-                                      ? "bg-emerald-100 text-emerald-800"
-                                      : "bg-red-100 text-red-800"
-                                  }`}
-                                >
-                                  {trade.action}
-                                </span>
-                              </div>
-                              <span className="text-xs text-slate-500">
-                                {trade.timestamp?.toLocaleTimeString()}
-                              </span>
-                            </div>
-                            <div className="grid grid-cols-2 gap-3 text-sm">
-                              <div>
-                                <span className="text-slate-500">가격:</span>
-                                <span className="ml-1 font-medium">
-                                  {formatCurrency(trade.price)}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="text-slate-500">수량:</span>
-                                <span className="ml-1 font-medium">
-                                  {trade.quantity?.toFixed(8)}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="text-slate-500">금액:</span>
-                                <span className="ml-1 font-medium">
-                                  {formatCurrency(trade.amount)}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="text-slate-500">수익률:</span>
-                                {trade.profitRate ? (
-                                  <span
-                                    className={`ml-1 font-medium ${
-                                      trade.profitRate >= 0
-                                        ? "text-emerald-600"
-                                        : "text-red-600"
-                                    }`}
-                                  >
-                                    {formatPercent(trade.profitRate)}
-                                  </span>
-                                ) : (
-                                  <span className="ml-1 text-slate-400">-</span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
                         ))}
-                    </div>
-
-                    {/* 데스크톱: 테이블 */}
-                    <div className="hidden sm:block bg-white rounded-xl border border-slate-200 overflow-hidden">
-                      <div className="overflow-x-auto">
-                        <table className="w-full">
-                          <thead className="bg-slate-50">
-                            <tr>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                                시간
-                              </th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                                종목
-                              </th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                                구분
-                              </th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                                가격
-                              </th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                                수량
-                              </th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                                금액
-                              </th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                                수익률
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-200">
-                            {portfolio.recentTrades
-                              .slice(0, 50)
-                              .map((trade, index) => (
-                                <tr
-                                  key={index}
-                                  className="hover:bg-slate-50 transition-colors"
-                                >
-                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
-                                    {trade.timestamp?.toLocaleTimeString()}
-                                  </td>
-                                  <td className="px-6 py-4 whitespace-nowrap font-medium text-slate-900">
-                                    {trade.symbol}
-                                  </td>
-                                  <td className="px-6 py-4 whitespace-nowrap">
-                                    <span
-                                      className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${
-                                        trade.action === "BUY"
-                                          ? "bg-emerald-100 text-emerald-800"
-                                          : "bg-red-100 text-red-800"
-                                      }`}
-                                    >
-                                      {trade.action}
-                                    </span>
-                                  </td>
-                                  <td className="px-6 py-4 whitespace-nowrap text-slate-600">
-                                    {formatCurrency(trade.price)}
-                                  </td>
-                                  <td className="px-6 py-4 whitespace-nowrap text-slate-600">
-                                    {trade.quantity?.toFixed(8)}
-                                  </td>
-                                  <td className="px-6 py-4 whitespace-nowrap text-slate-600">
-                                    {formatCurrency(trade.amount)}
-                                  </td>
-                                  <td className="px-6 py-4 whitespace-nowrap">
-                                    {trade.profitRate ? (
-                                      <span
-                                        className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${
-                                          trade.profitRate >= 0
-                                            ? "bg-emerald-100 text-emerald-800"
-                                            : "bg-red-100 text-red-800"
-                                        }`}
-                                      >
-                                        {formatPercent(trade.profitRate)}
-                                      </span>
-                                    ) : (
-                                      <span className="text-slate-400">-</span>
-                                    )}
-                                  </td>
-                                </tr>
-                              ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-center py-12 sm:py-16">
-                    <div className="text-4xl mb-4">📈</div>
-                    <p className="text-slate-500">거래 내역이 없습니다</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activeTab === "logs" && (
-              <div>
-                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 sm:mb-6 gap-2">
-                  <h3 className="font-semibold text-slate-900">실시간 로그</h3>
-                  <div className="text-sm text-slate-500">
-                    최근 {logs.length}개 로그 (자동 업데이트)
+                      </tbody>
+                    </table>
                   </div>
                 </div>
-                <LogViewer logs={logs} />
+              )}
+            </div>
+          ) : (
+            <div className="text-center text-gray-500 py-8">
+              <DollarSignIcon className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <p>거래가 활성화되면 포트폴리오가 표시됩니다</p>
+            </div>
+          )}
+        </div>
+
+        {/* 실시간 로그 */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <ActivityIcon className="w-5 h-5" />
+            실시간 로그
+            <span className="ml-auto text-sm text-gray-500">
+              {logs.length}/50
+            </span>
+          </h3>
+
+          <LogViewer logs={logs} />
+        </div>
+      </div>
+
+      {/* 최근 신호 */}
+      {lastSignal && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <ZapIcon className="w-5 h-5" />
+            최근 신호
+          </h3>
+
+          <div className="p-4 bg-gray-50 rounded-lg">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <span className={`px-2 py-1 rounded-full text-xs font-medium ${lastSignal.type === "BUY"
+                    ? "bg-green-100 text-green-800"
+                    : "bg-red-100 text-red-800"
+                  }`}>
+                  {lastSignal.type}
+                </span>
+                <span className="font-bold">{lastSignal.symbol}</span>
+                <span className="text-sm text-gray-600">
+                  {lastSignal.confidence} 신뢰도
+                </span>
               </div>
-            )}
+              <div className="text-sm text-gray-500">
+                {lastSignal.timestamp?.toLocaleTimeString()}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <div className="text-gray-600">가격</div>
+                <div className="font-medium">{formatCurrency(lastSignal.price)}</div>
+              </div>
+              <div>
+                <div className="text-gray-600">변동률</div>
+                <div className={`font-medium ${lastSignal.changePercent >= 0 ? "text-green-600" : "text-red-600"
+                  }`}>
+                  {lastSignal.changePercent >= 0 ? "+" : ""}{lastSignal.changePercent}%
+                </div>
+              </div>
+              <div>
+                <div className="text-gray-600">총점</div>
+                <div className="font-medium">{lastSignal.totalScore}</div>
+              </div>
+              <div>
+                <div className="text-gray-600">RSI</div>
+                <div className="font-medium">
+                  {lastSignal.technicalAnalysis?.rsi?.toFixed(1)}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 p-2 bg-white rounded text-xs text-gray-700">
+              {lastSignal.reason}
+            </div>
           </div>
         </div>
+      )}
+
+      {/* 거래 내역 */}
+      {portfolio?.trades?.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <BarChart3Icon className="w-5 h-5" />
+            거래 내역
+          </h3>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left p-3 font-medium">시간</th>
+                  <th className="text-left p-3 font-medium">종목</th>
+                  <th className="text-center p-3 font-medium">구분</th>
+                  <th className="text-right p-3 font-medium">가격</th>
+                  <th className="text-right p-3 font-medium">수량</th>
+                  <th className="text-right p-3 font-medium">금액</th>
+                  <th className="text-right p-3 font-medium">수익률</th>
+                </tr>
+              </thead>
+              <tbody>
+                {portfolio.trades.slice(0, 10).map((trade, idx) => (
+                  <tr key={idx} className="border-t">
+                    <td className="p-3 text-gray-600">
+                      {trade.timestamp?.toLocaleTimeString()}
+                    </td>
+                    <td className="p-3 font-medium">{trade.symbol}</td>
+                    <td className="p-3 text-center">
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${trade.action === 'BUY'
+                          ? "bg-blue-100 text-blue-800"
+                          : "bg-red-100 text-red-800"
+                        }`}>
+                        {trade.action === 'BUY' ? '매수' : '매도'}
+                      </span>
+                    </td>
+                    <td className="p-3 text-right">{formatCurrency(trade.price)}</td>
+                    <td className="p-3 text-right">{trade.quantity?.toFixed(8)}</td>
+                    <td className="p-3 text-right">{formatCurrency(trade.amount)}</td>
+                    <td className="p-3 text-right">
+                      {trade.profitRate ? (
+                        <span className={`px-2 py-1 rounded-full text-xs ${trade.profitRate >= 0
+                            ? "bg-green-100 text-green-800"
+                            : "bg-red-100 text-red-800"
+                          }`}>
+                          {trade.profitRate >= 0 ? (
+                            <ArrowUpIcon className="w-3 h-3 inline mr-1" />
+                          ) : (
+                            <ArrowDownIcon className="w-3 h-3 inline mr-1" />
+                          )}
+                          {formatPercent(trade.profitRate)}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">-</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {portfolio.trades.length === 0 && (
+            <div className="text-center text-gray-500 py-8">
+              <BarChart3Icon className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <p>거래가 실행되면 여기에 표시됩니다</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 도움말 */}
+      <div className="bg-blue-50 rounded-xl border border-blue-200 p-6">
+        <h3 className="text-lg font-semibold text-blue-900 mb-3">
+          💡 페이퍼 트레이딩이란?
+        </h3>
+        <p className="text-blue-800 text-sm leading-relaxed">
+          실제 돈을 사용하지 않고 가상의 자금으로 거래를 시뮬레이션하는 기능입니다.
+          거래 시스템의 실시간 활동을 모니터링할 수 있습니다.
+        </p>
       </div>
     </div>
   );

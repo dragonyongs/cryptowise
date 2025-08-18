@@ -1,397 +1,256 @@
+// src/services/testing/paperTradingEngine.js - 완전 수정 버전
+
 class PaperTradingEngine {
   constructor(initialBalance = 1840000) {
     this.initialBalance = initialBalance;
     this.portfolio = {
       krw: initialBalance,
-      coins: [],
-      totalValue: initialBalance,
+      coins: new Map(),
       trades: [],
-      recentTrades: [],
       performance: {
         totalReturn: 0,
         winRate: 0,
         maxDrawdown: 0,
-        totalTrades: 0,
-        winTrades: 0,
-        sharpeRatio: 0,
-        profitFactor: 0,
       },
-      // ✅ 추가된 메타데이터
-      createdAt: new Date(),
-      lastUpdated: new Date(),
-      maxPortfolioValue: initialBalance,
-      dailyReturns: [], // 샤프 비율 계산용
-    };
-
-    // ✅ 거래 설정
-    this.tradingFees = {
-      maker: 0.0005, // 0.05% 업비트 수수료
-      taker: 0.0005,
-    };
-
-    // ✅ 리스크 관리 설정
-    this.riskSettings = {
-      maxPositionSize: 0.3, // 최대 30% 포지션
-      maxDrawdownAlert: 0.15, // 15% 손실 시 알림
-      emergencyStopLoss: 0.25, // 25% 손실 시 긴급 정지
     };
   }
 
-  // ✅ 개선된 executeSignal
-  async executeSignal(signal, config) {
+  // ✅ 신호 실행
+  async executeSignal(signal) {
     try {
-      // 기본 검증
-      const validation = this.validateSignal(signal, config);
-      if (!validation.isValid) {
-        return { executed: false, reason: validation.reason };
+      const { symbol, type, price, totalScore } = signal;
+
+      if (type === "BUY") {
+        return await this.executeBuy(symbol, price, totalScore);
+      } else if (type === "SELL") {
+        return await this.executeSell(symbol, price, totalScore);
       }
 
-      // 리스크 체크
-      const riskCheck = this.checkRiskLimits(signal, config);
-      if (!riskCheck.passed) {
-        return { executed: false, reason: riskCheck.reason };
-      }
-
-      const positionSize = this.calculatePositionSize(signal, config);
-      if (positionSize <= 0) {
-        return { executed: false, reason: "Invalid position size" };
-      }
-
-      // ✅ 수수료 포함 거래 계산
-      const trade = this.createTrade(signal, positionSize);
-      const feeAdjustedTrade = this.applyTradingFees(trade);
-
-      // 포트폴리오 업데이트
-      this.updatePortfolio(feeAdjustedTrade);
-      this.portfolio.trades.push(feeAdjustedTrade);
-      this.addToRecentTrades(feeAdjustedTrade);
-
-      // 성과 계산 및 상태 업데이트
-      this.calculatePerformance();
-      this.updatePortfolioMetadata();
-
-      // ✅ 리스크 모니터링
-      this.checkEmergencyConditions();
-
-      return {
-        executed: true,
-        trade: feeAdjustedTrade,
-        portfolioAfter: this.getPortfolioSummary(),
-      };
+      return { executed: false, reason: "Invalid signal type" };
     } catch (error) {
-      console.error("거래 실행 중 오류:", error);
-      return {
-        executed: false,
-        reason: `거래 실행 오류: ${error.message}`,
-      };
+      console.error("Signal execution failed:", error);
+      return { executed: false, reason: error.message };
     }
   }
 
-  // ✅ 개선된 검증 시스템
-  validateSignal(signal, config) {
-    // 기본 검증
-    if (!signal || !config) {
-      return { isValid: false, reason: "신호 또는 설정이 없습니다" };
+  // ✅ 매수 실행
+  async executeBuy(symbol, price, score) {
+    const positionSize = Math.min(this.portfolio.krw * 0.1, 200000); // 10% 또는 최대 20만원
+
+    if (this.portfolio.krw < positionSize) {
+      return { executed: false, reason: "Insufficient balance" };
     }
 
-    if (!config.isActive) {
-      return { isValid: false, reason: "비활성화된 코인입니다" };
+    const quantity = positionSize / price;
+
+    // 기존 포지션 업데이트 또는 새로 생성
+    const existingCoin = this.portfolio.coins.get(symbol);
+    if (existingCoin) {
+      const totalQuantity = existingCoin.quantity + quantity;
+      const totalValue =
+        existingCoin.avgPrice * existingCoin.quantity + positionSize;
+      existingCoin.quantity = totalQuantity;
+      existingCoin.avgPrice = totalValue / totalQuantity;
+      existingCoin.currentPrice = price;
+    } else {
+      this.portfolio.coins.set(symbol, {
+        symbol,
+        quantity,
+        avgPrice: price,
+        currentPrice: price,
+      });
     }
 
-    if (signal.type === "BUY" && !config.buySettings?.enabled) {
-      return { isValid: false, reason: "매수 설정이 비활성화되어 있습니다" };
-    }
+    // 현금 차감
+    this.portfolio.krw -= positionSize;
 
-    if (signal.type === "SELL" && !config.sellSettings?.enabled) {
-      return { isValid: false, reason: "매도 설정이 비활성화되어 있습니다" };
-    }
-
-    // ✅ 가격 유효성 검증
-    if (!signal.price || signal.price <= 0) {
-      return { isValid: false, reason: "유효하지 않은 가격입니다" };
-    }
-
-    // ✅ 매도 시 보유량 확인
-    if (signal.type === "SELL") {
-      const holding = this.portfolio.coins.find(
-        (c) => c.symbol === signal.symbol
-      );
-      if (!holding || holding.quantity <= 0) {
-        return { isValid: false, reason: "보유하지 않은 코인입니다" };
-      }
-    }
-
-    return { isValid: true };
-  }
-
-  // ✅ 새로운 리스크 체크 시스템
-  checkRiskLimits(signal, config) {
-    // 현재 드로다운 체크
-    const currentDrawdown = this.getCurrentDrawdown();
-    if (currentDrawdown > this.riskSettings.maxDrawdownAlert) {
-      return {
-        passed: false,
-        reason: `높은 드로다운 상태 (${(currentDrawdown * 100).toFixed(1)}%)`,
-      };
-    }
-
-    // 매수 시 포지션 사이즈 제한
-    if (signal.type === "BUY") {
-      const positionRatio =
-        this.calculatePositionSize(signal, config) / this.portfolio.totalValue;
-      if (positionRatio > this.riskSettings.maxPositionSize) {
-        return {
-          passed: false,
-          reason: `포지션 크기 초과 (${(positionRatio * 100).toFixed(1)}% > ${this.riskSettings.maxPositionSize * 100}%)`,
-        };
-      }
-
-      // 현금 부족 체크
-      const requiredAmount = this.calculatePositionSize(signal, config);
-      if (requiredAmount > this.portfolio.krw) {
-        return {
-          passed: false,
-          reason: `보유 현금 부족 (필요: ${requiredAmount.toLocaleString()}원, 보유: ${this.portfolio.krw.toLocaleString()}원)`,
-        };
-      }
-    }
-
-    return { passed: true };
-  }
-
-  // ✅ 수수료 적용 시스템
-  applyTradingFees(trade) {
-    const feeRate = this.tradingFees.taker;
-    const fee = trade.amount * feeRate;
-
-    return {
-      ...trade,
-      fee: fee,
-      feeRate: feeRate,
-      netAmount:
-        trade.action === "BUY" ? trade.amount + fee : trade.amount - fee,
-    };
-  }
-
-  // ✅ 향상된 성과 계산
-  calculatePerformance() {
-    const initialBalance = this.initialBalance;
-
-    // 총 수익률
-    this.portfolio.performance.totalReturn =
-      ((this.portfolio.totalValue - initialBalance) / initialBalance) * 100;
-
-    // 거래 통계
-    const sellTrades = this.portfolio.trades.filter(
-      (trade) => trade.action === "SELL"
-    );
-    const profitTrades = sellTrades.filter(
-      (trade) => trade.profitRate && trade.profitRate > 0
-    );
-
-    this.portfolio.performance.totalTrades = sellTrades.length;
-    this.portfolio.performance.winTrades = profitTrades.length;
-    this.portfolio.performance.winRate =
-      sellTrades.length > 0
-        ? (profitTrades.length / sellTrades.length) * 100
-        : 0;
-
-    // ✅ 최대 드로다운 계산
-    this.calculateMaxDrawdown();
-
-    // ✅ 프로핏 팩터 계산
-    this.calculateProfitFactor(sellTrades);
-
-    // ✅ 샤프 비율 계산 (단순화된 버전)
-    this.calculateSharpeRatio();
-  }
-
-  // ✅ 최대 드로다운 계산
-  calculateMaxDrawdown() {
-    if (this.portfolio.maxPortfolioValue < this.portfolio.totalValue) {
-      this.portfolio.maxPortfolioValue = this.portfolio.totalValue;
-    }
-
-    const currentDrawdown =
-      (this.portfolio.maxPortfolioValue - this.portfolio.totalValue) /
-      this.portfolio.maxPortfolioValue;
-
-    if (currentDrawdown > this.portfolio.performance.maxDrawdown) {
-      this.portfolio.performance.maxDrawdown = currentDrawdown * 100;
-    }
-  }
-
-  // ✅ 현재 드로다운 반환
-  getCurrentDrawdown() {
-    return (
-      (this.portfolio.maxPortfolioValue - this.portfolio.totalValue) /
-      this.portfolio.maxPortfolioValue
-    );
-  }
-
-  // ✅ 프로핏 팩터 계산
-  calculateProfitFactor(sellTrades) {
-    const profitTrades = sellTrades.filter((t) => t.profitRate > 0);
-    const lossTrades = sellTrades.filter((t) => t.profitRate <= 0);
-
-    const totalProfit = profitTrades.reduce(
-      (sum, t) => sum + (t.amount * t.profitRate) / 100,
-      0
-    );
-    const totalLoss = Math.abs(
-      lossTrades.reduce((sum, t) => sum + (t.amount * t.profitRate) / 100, 0)
-    );
-
-    this.portfolio.performance.profitFactor =
-      totalLoss > 0 ? totalProfit / totalLoss : 0;
-  }
-
-  // ✅ 샤프 비율 계산 (단순화)
-  calculateSharpeRatio() {
-    const returns = this.portfolio.dailyReturns;
-    if (returns.length < 2) return;
-
-    const avgReturn = returns.reduce((a, b) => a + b) / returns.length;
-    const variance =
-      returns.reduce((sum, ret) => sum + Math.pow(ret - avgReturn, 2), 0) /
-      returns.length;
-    const stdDev = Math.sqrt(variance);
-
-    this.portfolio.performance.sharpeRatio =
-      stdDev > 0 ? avgReturn / stdDev : 0;
-  }
-
-  // ✅ 거래 생성 헬퍼
-  createTrade(signal, positionSize) {
-    return {
-      id: `${Date.now()}_${signal.symbol}_${signal.type}`,
-      symbol: signal.symbol,
-      action: signal.type,
-      price: signal.price,
-      quantity:
-        signal.type === "BUY" ? positionSize / signal.price : positionSize,
-      amount:
-        signal.type === "BUY" ? positionSize : positionSize * signal.price,
+    // 거래 기록
+    const trade = {
+      id: Date.now(),
+      symbol,
+      action: "BUY",
+      quantity,
+      price,
+      amount: positionSize,
       timestamp: new Date(),
-      executed: true,
-      reason: signal.reason || `${signal.type} 신호`,
-      confidence: signal.confidence || "medium",
-      signalScore: signal.totalScore || 0,
+      score,
     };
+
+    this.portfolio.trades.push(trade);
+
+    return { executed: true, trade };
   }
 
-  // ✅ 최근 거래 관리
-  addToRecentTrades(trade) {
-    this.portfolio.recentTrades.unshift(trade);
-    if (this.portfolio.recentTrades.length > 100) {
-      this.portfolio.recentTrades = this.portfolio.recentTrades.slice(0, 100);
+  // ✅ 매도 실행
+  async executeSell(symbol, price, score) {
+    const coin = this.portfolio.coins.get(symbol);
+    if (!coin || coin.quantity <= 0) {
+      return { executed: false, reason: "No position to sell" };
     }
+
+    const sellQuantity = coin.quantity * 0.5; // 50% 매도
+    const sellAmount = sellQuantity * price;
+
+    // 포지션 업데이트
+    coin.quantity -= sellQuantity;
+    coin.currentPrice = price; // ✅ 현재 가격 업데이트
+
+    if (coin.quantity < 0.00000001) {
+      this.portfolio.coins.delete(symbol);
+    }
+
+    // 현금 증가
+    this.portfolio.krw += sellAmount;
+
+    // 거래 기록
+    const profitRate = ((price - coin.avgPrice) / coin.avgPrice) * 100;
+    const trade = {
+      id: Date.now(),
+      symbol,
+      action: "SELL",
+      quantity: sellQuantity,
+      price,
+      amount: sellAmount,
+      timestamp: new Date(),
+      profitRate,
+      score,
+    };
+
+    this.portfolio.trades.push(trade);
+
+    return { executed: true, trade };
   }
 
-  // ✅ 포트폴리오 메타데이터 업데이트
-  updatePortfolioMetadata() {
-    this.portfolio.lastUpdated = new Date();
-
-    // 일일 수익률 추가 (하루에 한 번만)
-    const today = new Date().toDateString();
-    const lastUpdateDate = new Date(this.portfolio.lastUpdated).toDateString();
-
-    if (today !== lastUpdateDate) {
-      const dailyReturn = this.portfolio.performance.totalReturn;
-      this.portfolio.dailyReturns.push(dailyReturn);
-
-      // 최대 30일 데이터만 보관
-      if (this.portfolio.dailyReturns.length > 30) {
-        this.portfolio.dailyReturns = this.portfolio.dailyReturns.slice(-30);
+  // ✅ 실시간 가격 업데이트 - 수익률 계산 수정
+  updatePrices(priceData) {
+    for (const [symbol, coin] of this.portfolio.coins) {
+      const marketSymbol = `KRW-${symbol}`;
+      if (priceData[marketSymbol]) {
+        coin.currentPrice = priceData[marketSymbol];
+        // ✅ 수익률도 즉시 업데이트
+        coin.profitRate =
+          ((coin.currentPrice - coin.avgPrice) / coin.avgPrice) * 100;
       }
     }
   }
 
-  // ✅ 긴급 상황 체크
-  checkEmergencyConditions() {
-    const currentDrawdown = this.getCurrentDrawdown();
-
-    if (currentDrawdown > this.riskSettings.emergencyStopLoss) {
-      console.warn(
-        `🚨 긴급 손실 한계 도달: ${(currentDrawdown * 100).toFixed(1)}%`
-      );
-      return {
-        emergency: true,
-        reason: "최대 손실 한계 초과",
-        action: "모든 포지션 정리 권장",
-      };
+  // ✅ 단일 코인 가격 업데이트
+  updateCoinPrice(symbol, price) {
+    const coin = this.portfolio.coins.get(symbol);
+    if (coin) {
+      coin.currentPrice = price;
+      coin.profitRate = ((price - coin.avgPrice) / coin.avgPrice) * 100;
     }
-
-    return { emergency: false };
   }
 
-  // ✅ 향상된 포트폴리오 요약
+  // ✅ 포트폴리오 요약 - 수익률 계산 완전 수정
   getPortfolioSummary() {
-    this.updatePortfolioValue();
+    let totalCryptoValue = 0;
+    const coins = [];
+
+    // 현재 시세로 코인 가치 계산
+    for (const [symbol, coin] of this.portfolio.coins) {
+      const currentValue = coin.quantity * coin.currentPrice;
+      const profitRate =
+        ((coin.currentPrice - coin.avgPrice) / coin.avgPrice) * 100;
+
+      totalCryptoValue += currentValue;
+
+      coins.push({
+        symbol,
+        quantity: coin.quantity,
+        avgPrice: coin.avgPrice,
+        currentPrice: coin.currentPrice,
+        currentValue,
+        profitRate: Number(profitRate.toFixed(4)), // ✅ 소수점 4자리
+      });
+    }
+
+    const totalPortfolioValue = this.portfolio.krw + totalCryptoValue;
+
+    // ✅ 전체 포트폴리오 수익률 계산 수정
+    const totalReturn =
+      ((totalPortfolioValue - this.initialBalance) / this.initialBalance) * 100;
+
+    // ✅ 성과 업데이트
+    this.portfolio.performance.totalReturn = totalReturn;
+
     return {
-      ...this.portfolio,
-      // 추가 통계
-      totalFees: this.portfolio.trades.reduce(
-        (sum, t) => sum + (t.fee || 0),
-        0
-      ),
-      activePositions: this.portfolio.coins.length,
-      cashRatio: (
-        (this.portfolio.krw / this.portfolio.totalValue) *
-        100
-      ).toFixed(1),
-      riskMetrics: {
-        currentDrawdown: (this.getCurrentDrawdown() * 100).toFixed(2),
-        maxDrawdown: this.portfolio.performance.maxDrawdown.toFixed(2),
-        riskLevel: this.assessRiskLevel(),
+      krw: Math.floor(this.portfolio.krw), // ✅ 정수로 반올림
+      totalValue: Math.floor(totalPortfolioValue),
+      totalReturn: Number(totalReturn.toFixed(4)), // ✅ 소수점 4자리로 정확한 계산
+      coins,
+      trades: this.portfolio.trades.slice(-10), // 최근 10개 거래만
+      performance: {
+        ...this.portfolio.performance,
+        totalReturn: Number(totalReturn.toFixed(4)),
+      },
+      // ✅ 추가 통계
+      activePositions: this.portfolio.coins.size,
+      cashRatio: ((this.portfolio.krw / totalPortfolioValue) * 100).toFixed(1),
+    };
+  }
+
+  // ✅ 포트폴리오 리셋
+  resetPortfolio() {
+    this.portfolio = {
+      krw: this.initialBalance,
+      coins: new Map(),
+      trades: [],
+      performance: {
+        totalReturn: 0,
+        winRate: 0,
+        maxDrawdown: 0,
       },
     };
   }
 
-  // ✅ 리스크 레벨 평가
-  assessRiskLevel() {
-    const drawdown = this.getCurrentDrawdown();
-    const cashRatio = this.portfolio.krw / this.portfolio.totalValue;
-
-    if (drawdown > 0.2 || cashRatio < 0.1) return "HIGH";
-    if (drawdown > 0.1 || cashRatio < 0.2) return "MEDIUM";
-    return "LOW";
-  }
-
-  // ✅ 포트폴리오 상태 저장/로드
-  exportPortfolio() {
-    return JSON.stringify(this.portfolio, null, 2);
-  }
-
-  importPortfolio(portfolioJson) {
-    try {
-      const imported = JSON.parse(portfolioJson);
-      this.portfolio = { ...this.portfolio, ...imported };
-      this.updatePortfolioValue();
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  // ✅ 거래 통계 조회
-  getTradingStats(days = 30) {
-    const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    const recentTrades = this.portfolio.trades.filter(
-      (t) => new Date(t.timestamp) > cutoffDate
+  // ✅ 거래 통계
+  getTradingStats() {
+    const buyTrades = this.portfolio.trades.filter((t) => t.action === "BUY");
+    const sellTrades = this.portfolio.trades.filter((t) => t.action === "SELL");
+    const profitTrades = sellTrades.filter(
+      (t) => t.profitRate && t.profitRate > 0
     );
 
     return {
-      period: `최근 ${days}일`,
-      totalTrades: recentTrades.length,
-      buyTrades: recentTrades.filter((t) => t.action === "BUY").length,
-      sellTrades: recentTrades.filter((t) => t.action === "SELL").length,
-      avgTradeSize:
-        recentTrades.reduce((sum, t) => sum + t.amount, 0) /
-          recentTrades.length || 0,
-      totalFees: recentTrades.reduce((sum, t) => sum + (t.fee || 0), 0),
+      totalTrades: this.portfolio.trades.length,
+      buyTrades: buyTrades.length,
+      sellTrades: sellTrades.length,
+      winRate:
+        sellTrades.length > 0
+          ? ((profitTrades.length / sellTrades.length) * 100).toFixed(2)
+          : 0,
+      totalFees: this.portfolio.trades.reduce(
+        (sum, trade) => sum + trade.amount * 0.0005,
+        0
+      ), // 0.05% 수수료
     };
+  }
+
+  // ✅ 디버그용 로깅
+  logPortfolioState() {
+    console.log("=== 포트폴리오 상태 ===");
+    console.log(`초기 자본: ${this.initialBalance.toLocaleString()}원`);
+    console.log(`현재 현금: ${this.portfolio.krw.toLocaleString()}원`);
+    console.log(`보유 코인: ${this.portfolio.coins.size}개`);
+
+    for (const [symbol, coin] of this.portfolio.coins) {
+      const currentValue = coin.quantity * coin.currentPrice;
+      const profitRate =
+        ((coin.currentPrice - coin.avgPrice) / coin.avgPrice) * 100;
+      console.log(
+        `- ${symbol}: ${coin.quantity.toFixed(8)}개, 평균가 ${coin.avgPrice.toLocaleString()}원, 현재가 ${coin.currentPrice.toLocaleString()}원, 수익률 ${profitRate.toFixed(2)}%`
+      );
+    }
+
+    const summary = this.getPortfolioSummary();
+    console.log(`전체 가치: ${summary.totalValue.toLocaleString()}원`);
+    console.log(`전체 수익률: ${summary.totalReturn.toFixed(4)}%`);
+    console.log("===================");
   }
 }
 
+// 싱글톤 인스턴스 생성
 export const paperTradingEngine = new PaperTradingEngine();
+export default PaperTradingEngine;

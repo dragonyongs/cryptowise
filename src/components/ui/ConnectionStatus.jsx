@@ -1,4 +1,5 @@
-// ConnectionStatus.jsx 개선
+// src/components/ui/ConnectionStatus.jsx
+
 export const ConnectionStatus = ({
   connectionStatus,
   onReconnect,
@@ -25,7 +26,8 @@ export const ConnectionStatus = ({
         return {
           color: "red",
           icon: "🔴",
-          text: `업비트 연결 끊어짐 ${reconnectAttempts > 0 ? `(${reconnectAttempts}회 시도)` : ""}`,
+          text: `업비트 연결 끊어짐 ${reconnectAttempts > 0 ? `(${reconnectAttempts}회 시도)` : ""
+            }`,
           bgColor: "bg-red-50",
         };
       case "error":
@@ -48,21 +50,22 @@ export const ConnectionStatus = ({
   const config = getStatusConfig(connectionStatus);
 
   return (
-    <div
-      className={`flex items-center gap-2 px-3 py-2 rounded-lg ${config.bgColor}`}
-    >
+    <div className={`p-2 rounded ${config.bgColor} flex items-center gap-2`}>
       <span>{config.icon}</span>
-      <span className={`text-sm font-medium text-${config.color}-700`}>
-        {config.text}
-      </span>
-      {connectionStatus === "disconnected" && (
+      <span className={`text-${config.color}-700`}>{config.text}</span>
+      {connectionStatus !== "connected" && onReconnect ? (
         <button
+          className="ml-auto px-2 py-1 border rounded text-sm"
           onClick={onReconnect}
-          className="ml-2 px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
         >
           재연결
         </button>
-      )}
+      ) : null}
+      {lastError ? (
+        <span className="ml-2 text-xs text-red-500">{String(lastError)}</span>
+      ) : null}
     </div>
   );
 };
+
+export default ConnectionStatus;
