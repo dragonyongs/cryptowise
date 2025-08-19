@@ -93,19 +93,34 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
 
       const numericLevel = LOG_LEVELS[level] ?? LOG_LEVELS.info;
 
+      // 🚫 개발환경이 아닐 때 디버그 로그 차단
+      if (level === "debug" && process.env.NODE_ENV !== "development") {
+        return;
+      }
+
       // 로그 레벨 체크
       if (numericLevel > currentLogLevel) return;
 
-      // ✅ 스로틀링 (같은 메시지 반복 방지)
+      // ✅ 강화된 스로틀링 (반복 로그 방지)
       if (throttleKey) {
         const now = Date.now();
         const lastLogged = logThrottle.current.get(throttleKey);
-        if (lastLogged && now - lastLogged < 5000) {
-          // 5초 스로틀
+        if (lastLogged && now - lastLogged < 60000) {
+          // 5초 → 60초로 연장
           return;
         }
         logThrottle.current.set(throttleKey, now);
       }
+
+      // ⚡ 일반적인 메시지 스로틀링 (같은 메시지 반복 방지)
+      const messageKey = `msg_${message.substring(0, 50)}`;
+      const now = Date.now();
+      const lastMessageTime = logThrottle.current.get(messageKey);
+      if (lastMessageTime && now - lastMessageTime < 30000) {
+        // 30초 스로틀
+        return;
+      }
+      logThrottle.current.set(messageKey, now);
 
       // ✅ 성능 카운터 업데이트
       performanceRef.current.currentSecondCount++;
@@ -128,10 +143,10 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
         },
       };
 
-      // ✅ 상태 업데이트 (성능 최적화)
-      setLogs((prev) => [logEntry, ...prev.slice(0, 49)]); // 최대 50개 유지
+      // ✅ 상태 업데이트 (로그 개수 대폭 축소)
+      setLogs((prev) => [logEntry, ...prev.slice(0, 19)]); // 50개 → 20개로 축소
 
-      // ✅ 콘솔 로그 (환경에 따라)
+      // ✅ 콘솔 로그 (개발환경 또는 에러만)
       if (process.env.NODE_ENV === "development" || level === "error") {
         const emoji =
           {

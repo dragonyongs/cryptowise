@@ -228,41 +228,53 @@ export const usePaperTrading = (
   // ✅ 신호 생성 및 거래 실행 (상태 체크 문제 해결)
   const processMarketData = useCallback(
     async (data) => {
-      console.log(`🔥 [PROCESS-DEBUG] processMarketData 호출됨!`, data);
+      // 🚫 운영환경에서는 디버그 로그 제거
+      if (process.env.NODE_ENV === "development") {
+        console.log(
+          `🔥 [PROCESS-DEBUG] processMarketData 호출됨!`,
+          data.symbol
+        );
+      }
 
       // ✅ isActiveRef만 체크 (React 상태 업데이트 타이밍 문제 해결)
       if (!isActiveRef.current) {
-        console.log(
-          `❌ [PROCESS-DEBUG] 활성 상태 체크 실패: isActiveRef=${isActiveRef.current}`
-        );
+        if (process.env.NODE_ENV === "development") {
+          console.log(
+            `❌ [PROCESS-DEBUG] 활성 상태 체크 실패: isActiveRef=${isActiveRef.current}`
+          );
+        }
         return;
       }
 
       const symbol = data.symbol || data.code?.replace("KRW-", "");
       if (!symbol) {
-        console.log(`❌ [PROCESS-DEBUG] 심볼 없음:`, data);
+        if (process.env.NODE_ENV === "development") {
+          console.log(`❌ [PROCESS-DEBUG] 심볼 없음:`, data);
+        }
         return;
       }
 
       try {
-        console.log(`🎯 [PROCESS-DEBUG] ${symbol} 데이터 처리 시작`);
+        if (process.env.NODE_ENV === "development") {
+          console.log(`🎯 [PROCESS-DEBUG] ${symbol} 데이터 처리 시작`);
+        }
 
-        // ✅ 즉시 통계 업데이트 (가장 먼저!)
+        // ✅ 즉시 통계 업데이트 (로그 없이)
         updateStats((prev) => {
           const newStats = {
             ...prev,
             dataReceived: prev.dataReceived + 1,
             lastActivity: new Date().toLocaleTimeString(),
           };
-          console.log(`📊 [PROCESS-DEBUG] 통계 업데이트:`, newStats);
+          // 🚫 통계 업데이트 로그 제거 (너무 빈번)
           return newStats;
         });
 
-        // 마켓 데이터 업데이트
+        // 마켓 데이터 업데이트 (로그 없이)
         setMarketData((prev) => {
           const newMap = new Map(prev);
           newMap.set(symbol, data);
-          console.log(`💾 [PROCESS-DEBUG] 마켓 데이터 저장: ${symbol}`, data);
+          // 🚫 마켓 데이터 저장 로그 제거 (너무 빈번)
           return newMap;
         });
 
@@ -270,32 +282,34 @@ export const usePaperTrading = (
         const price = data.trade_price || data.price;
         if (price) {
           paperTradingEngine.updateCoinPrice(symbol, price);
-          console.log(
-            `📊 [PROCESS-DEBUG] ${symbol} 엔진 가격 업데이트: ₩${price?.toLocaleString()}`
-          );
+          // 🚫 가격 업데이트 로그 제거 (너무 빈번)
         }
 
-        // ✅ 신호 생성 (상세 디버깅)
-        console.log(`🎯 [PROCESS-DEBUG] ${symbol} 신호 생성 시작...`);
-        console.log(
-          `📋 [PROCESS-DEBUG] 거래 설정:`,
-          tradingSettingsRef.current
-        );
+        // ✅ 신호 생성 (로그 최소화)
+        if (process.env.NODE_ENV === "development") {
+          console.log(`🎯 [PROCESS-DEBUG] ${symbol} 신호 생성 시작...`);
+          console.log(
+            `📋 [PROCESS-DEBUG] 거래 설정:`,
+            tradingSettingsRef.current
+          );
+        }
 
         const signals = await signalGenerator.generateSignalsWithSettings(
           [data],
           tradingSettingsRef.current
         );
 
-        console.log(`📈 [PROCESS-DEBUG] ${symbol} 신호 생성 결과:`, {
-          signalCount: signals?.length || 0,
-          signals: signals?.map((s) => ({
-            symbol: s.symbol,
-            type: s.type,
-            totalScore: s.totalScore,
-            confidence: s.confidence,
-          })),
-        });
+        if (process.env.NODE_ENV === "development") {
+          console.log(`📈 [PROCESS-DEBUG] ${symbol} 신호 생성 결과:`, {
+            signalCount: signals?.length || 0,
+            signals: signals?.map((s) => ({
+              symbol: s.symbol,
+              type: s.type,
+              totalScore: s.totalScore,
+              confidence: s.confidence,
+            })),
+          });
+        }
 
         // ✅ 신호 평가 통계 업데이트
         updateStats((prev) => ({
@@ -304,7 +318,9 @@ export const usePaperTrading = (
         }));
 
         if (signals.length === 0) {
-          console.log(`❌ [PROCESS-DEBUG] ${symbol} 신호 없음 - 조건 미달`);
+          if (process.env.NODE_ENV === "development") {
+            console.log(`❌ [PROCESS-DEBUG] ${symbol} 신호 없음 - 조건 미달`);
+          }
 
           updateStats((prev) => ({
             ...prev,
@@ -317,12 +333,14 @@ export const usePaperTrading = (
         const signal = signals[0];
         setLastSignal(signal);
 
-        console.log(`✅ [PROCESS-DEBUG] ${symbol} 최적 신호 선택:`, {
-          type: signal.type,
-          totalScore: signal.totalScore,
-          price: signal.price,
-          confidence: signal.confidence,
-        });
+        if (process.env.NODE_ENV === "development") {
+          console.log(`✅ [PROCESS-DEBUG] ${symbol} 최적 신호 선택:`, {
+            type: signal.type,
+            totalScore: signal.totalScore,
+            price: signal.price,
+            confidence: signal.confidence,
+          });
+        }
 
         // ✅ 신호 생성 통계 업데이트
         updateStats((prev) => ({
@@ -330,22 +348,32 @@ export const usePaperTrading = (
           signalsGenerated: prev.signalsGenerated + 1,
         }));
 
+        // ✅ 중요한 신호만 로그 (스로틀링 적용)
         addLog(
-          `🎯 ${symbol} ${signal.type} 신호 생성! 점수: ${signal.totalScore?.toFixed(1)} (${testModeRef.current ? "테스트" : "실전"})`,
-          "success"
+          `🎯 ${symbol} ${signal.type} 신호 생성! 점수: ${signal.totalScore?.toFixed(1)}`,
+          "success",
+          `signal_${symbol}_${signal.type}`, // 스로틀링 키 추가
+          { symbol, type: signal.type, score: signal.totalScore }
         );
 
-        // ✅ 거래 실행 (상세 디버깅)
-        console.log(`💰 [PROCESS-DEBUG] ${symbol} 거래 실행 시도...`);
+        // ✅ 거래 실행
+        if (process.env.NODE_ENV === "development") {
+          console.log(`💰 [PROCESS-DEBUG] ${symbol} 거래 실행 시도...`);
+        }
 
         const result = await paperTradingEngine.executeSignal(signal);
 
-        console.log(`📊 [PROCESS-DEBUG] ${symbol} 거래 실행 결과:`, result);
+        if (process.env.NODE_ENV === "development") {
+          console.log(`📊 [PROCESS-DEBUG] ${symbol} 거래 실행 결과:`, result);
+        }
 
         if (result?.executed) {
+          // ✅ 성공한 거래만 로그 (중요!)
           addLog(
             `🎉 ${signal.symbol} ${signal.type} 거래 성공! ₩${signal.price.toLocaleString()}`,
-            "success"
+            "success",
+            null, // 거래 성공은 스로틀링 없이
+            { symbol: signal.symbol, type: signal.type, price: signal.price }
           );
 
           updateStats((prev) => ({
@@ -362,19 +390,24 @@ export const usePaperTrading = (
         } else {
           const rejectionReason = result?.reason || "알 수 없는 사유";
 
-          console.log(`❌ [PROCESS-DEBUG] ${symbol} 거래 거부:`, {
-            reason: rejectionReason,
-            signal: {
-              type: signal.type,
-              totalScore: signal.totalScore,
-              price: signal.price,
-            },
-            result: result,
-          });
+          if (process.env.NODE_ENV === "development") {
+            console.log(`❌ [PROCESS-DEBUG] ${symbol} 거래 거부:`, {
+              reason: rejectionReason,
+              signal: {
+                type: signal.type,
+                totalScore: signal.totalScore,
+                price: signal.price,
+              },
+              result: result,
+            });
+          }
 
+          // ✅ 거래 거부는 스로틀링으로 줄이기
           addLog(
             `❌ ${signal.symbol} ${signal.type} 거래 거부: ${rejectionReason}`,
-            "warning"
+            "warning",
+            `rejection_${symbol}_${rejectionReason}`, // 스로틀링 키 추가
+            { symbol: signal.symbol, reason: rejectionReason }
           );
 
           updateStats((prev) => ({
@@ -386,7 +419,14 @@ export const usePaperTrading = (
         console.error(`💥 [PROCESS-DEBUG] ${symbol} 처리 중 오류:`, error);
 
         if (isActiveRef.current) {
-          addLog(`❌ ${symbol} 처리 중 오류: ${error.message}`, "error");
+          // ✅ 에러는 항상 로그 (중요!)
+          addLog(
+            `❌ ${symbol} 처리 중 오류: ${error.message}`,
+            "error",
+            null, // 에러는 스로틀링 없이
+            { symbol, error: error.message }
+          );
+
           updateStats((prev) => ({
             ...prev,
             processingErrors: (prev.processingErrors || 0) + 1,
