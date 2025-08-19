@@ -1,8 +1,9 @@
 // src/stores/coinStore.js
+
 /* -------------------------------------------------------------
  * CryptoWise - 완전한 Coin Store
  * 페이퍼트레이딩 & 실전매매 지원
- * 2025-08-19 개선: setSelectedCoinsExternal + 실제 업비트 API 연동
+ * 2025-08-19 개선: localStorage 자동 주입 방지 + 관심코인 보호
  * ----------------------------------------------------------- */
 
 import { create } from "zustand";
@@ -83,6 +84,7 @@ const sortCoinsByPriority = (
 ) => {
   return [...coins].sort((a, b) => {
     let aVal, bVal;
+
     switch (sortBy) {
       case SORT_OPTIONS.INVESTMENT_PRIORITY:
         aVal = calculateInvestmentPriority(a);
@@ -112,6 +114,7 @@ const sortCoinsByPriority = (
         aVal = a[sortBy] || 0;
         bVal = b[sortBy] || 0;
     }
+
     return direction === "asc" ? aVal - bVal : bVal - aVal;
   });
 };
@@ -217,7 +220,6 @@ class CoinDataService {
       const priceData = await response.json();
       const ttl = priority === "high" ? 10_000 : API_CONFIG.CACHE_DURATION;
       this.cache.set(cacheKey, priceData, ttl);
-
       return priceData;
     } catch (error) {
       console.error("Failed to fetch price data:", error);
@@ -309,22 +311,32 @@ export const useCoinStore = create(
         },
 
         /* === 핵심: setSelectedCoins 액션 === */
-        setSelectedCoins: (coinsOrMarkets) => {
+        setSelectedCoins: (coinsOrMarkets, preserveMode = false) => {
           const { availableCoins, sortBy, sortDirection } = get();
-
           let newCoins;
-          if (Array.isArray(coinsOrMarkets) && coinsOrMarkets.length > 0) {
-            if (typeof coinsOrMarkets[0] === "string") {
-              // 마켓 코드 배열인 경우 (예: ["KRW-BTC", "KRW-ETH"])
-              newCoins = availableCoins.filter((c) =>
-                coinsOrMarkets.includes(c.market)
-              );
-            } else {
-              // 코인 객체 배열인 경우
-              newCoins = coinsOrMarkets;
-            }
+
+          // 🔒 보호 모드: 기존 관심코인이 있고 preserveMode가 true면 병합
+          if (preserveMode && get().selectedCoins.length > 0) {
+            const existingFavorites = get().selectedCoins.filter(
+              (coin) => !coin.isTopCoin
+            );
+            const newTopCoins = Array.isArray(coinsOrMarkets)
+              ? coinsOrMarkets
+              : [];
+            newCoins = [...existingFavorites, ...newTopCoins];
           } else {
-            newCoins = [];
+            // 기존 로직
+            if (Array.isArray(coinsOrMarkets) && coinsOrMarkets.length > 0) {
+              if (typeof coinsOrMarkets[0] === "string") {
+                newCoins = availableCoins.filter((c) =>
+                  coinsOrMarkets.includes(c.market)
+                );
+              } else {
+                newCoins = coinsOrMarkets;
+              }
+            } else {
+              newCoins = [];
+            }
           }
 
           set({
@@ -429,14 +441,23 @@ export const useCoinStore = create(
           });
         },
 
-        /* === 데이터 초기화 === */
-        initializeData: async () => {
+        /* === 🎯 핵심 개선: 데이터 초기화 === */
+        initializeData: async (forceInit = false) => {
           const state = get();
+
+          // ✅ 자동 초기화 완전 차단 - 명시적 호출만 허용
+          if (!forceInit) {
+            console.log("🔒 자동 초기화 차단됨 - 명시적 forceInit=true 필요");
+            return;
+          }
+
           if (state.isInitialized && state.availableCoins.length > 0) return;
 
           set({ isLoading: true, error: null, loadingProgress: 0 });
 
           try {
+            console.log("🚀 데이터 초기화 시작 (명시적 호출)");
+
             // 1단계: 마켓 목록
             set({ loadingProgress: 25 });
             const markets = await CoinDataService.fetchUpbitMarkets();
@@ -517,10 +538,9 @@ export const useCoinStore = create(
         /* === 데이터 새로고침 === */
         refreshData: async () => {
           const state = get();
-          if (!state.isInitialized) return get().initializeData();
+          if (!state.isInitialized) return get().initializeData(true);
 
           set({ isLoading: true, error: null });
-
           try {
             // 관심 코인 우선 업데이트
             if (state.selectedCoins.length > 0) {
@@ -551,7 +571,6 @@ export const useCoinStore = create(
 
             get().updateCoinPrices(allPrices);
             set({ isLoading: false });
-
             console.log(`✅ 가격 데이터 새로고침 완료: ${allPrices.length}개`);
           } catch (error) {
             console.error("데이터 새로고침 실패:", error);
@@ -628,6 +647,7 @@ export const useCoinStore = create(
             if (selectedCoins.length > maxCoins) {
               selectedCoins = selectedCoins.slice(0, maxCoins);
             }
+
             return {
               userPlan: plan,
               maxCoins,
@@ -668,16 +688,28 @@ export const useCoinStore = create(
       }),
       {
         name: "cryptowise-coin-store",
-        version: 4, // 버전 업데이트
+        version: 5, // ✅ 버전 업데이트
+        // 🎯 개선된 persist 설정 - 중요 데이터만 저장
         partialize: (state) => ({
           selectedCoins: state.selectedCoins,
           userPlan: state.userPlan,
           maxCoins: state.maxCoins,
-          lastUpdated: state.lastUpdated,
+          // ❌ availableCoins 제거 (API 데이터는 저장 안함)
+          // ❌ lastUpdated 제거 (매번 갱신되는 데이터)
           sortBy: state.sortBy,
           sortDirection: state.sortDirection,
           filterOptions: state.filterOptions,
         }),
+        // 🎯 복원 시 로그
+        onRehydrateStorage: () => (state) => {
+          if (state) {
+            console.log("📦 localStorage에서 복원:", {
+              selectedCoins: state.selectedCoins?.length || 0,
+              userPlan: state.userPlan,
+              maxCoins: state.maxCoins,
+            });
+          }
+        },
       }
     )
   )
@@ -711,6 +743,8 @@ if (process.env.NODE_ENV === "development") {
     getState: () => useCoinStore.getState(),
     setCoins: setSelectedCoinsExternal,
     cache: CoinDataService.cache,
+    // 🎯 개발용 강제 초기화 함수
+    forceInit: () => useCoinStore.getState().initializeData(true),
   };
 }
 

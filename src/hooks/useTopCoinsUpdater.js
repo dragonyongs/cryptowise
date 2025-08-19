@@ -1,20 +1,26 @@
-// src/hooks/useTopCoinsUpdater.js
+// src/hooks/useTopCoinsUpdater.js - 하드코딩 문제 해결 버전
 
 import { useEffect, useCallback } from "react";
 import { useCoinStore } from "../stores/coinStore.js";
 import { upbitMarketService } from "../services/upbit/upbitMarketService.js";
 
-export const useTopCoinsUpdater = (isActive, tradingMode, testMode, addLog) => {
+export const useTopCoinsUpdater = (
+  isActive,
+  tradingMode,
+  testMode,
+  addLog,
+  topCoinsLimit = 10
+) => {
   const { setSelectedCoins } = useCoinStore();
 
   const updateTopCoins = useCallback(async () => {
     if (!isActive || tradingMode !== "top") return;
 
     try {
-      const topCoins = await upbitMarketService.getTopCoins(
-        testMode ? 15 : 10,
-        testMode
-      );
+      // ✅ 하드코딩 제거 - topCoinsLimit 파라미터 사용
+      const maxCoins = topCoinsLimit;
+
+      const topCoins = await upbitMarketService.getTopCoins(maxCoins, testMode);
 
       const formattedCoins = topCoins.map((coin) => ({
         symbol: coin.symbol,
@@ -28,20 +34,38 @@ export const useTopCoinsUpdater = (isActive, tradingMode, testMode, addLog) => {
         lastUpdated: new Date(),
       }));
 
-      setSelectedCoins(formattedCoins);
-      addLog?.(`🔄 상위 코인 UI 업데이트: ${formattedCoins.length}개`, "info");
+      // ✅ 보호 모드로 호출하여 관심코인 보존
+      setSelectedCoins(formattedCoins, false); // 덮어쓰기 모드
+
+      addLog?.(
+        `🔄 상위 코인 UI 업데이트: ${formattedCoins.length}개 (설정: ${maxCoins}개)`,
+        "info"
+      );
     } catch (error) {
       addLog?.(`❌ 상위 코인 UI 업데이트 실패: ${error.message}`, "error");
     }
-  }, [isActive, tradingMode, testMode, setSelectedCoins, addLog]);
+  }, [
+    isActive,
+    tradingMode,
+    testMode,
+    topCoinsLimit,
+    setSelectedCoins,
+    addLog,
+  ]);
 
-  // 5분마다 상위 코인 업데이트
+  // 5분마다 상위 코인 업데이트 (상위코인 모드일 때만)
   useEffect(() => {
     if (!isActive || tradingMode !== "top") return;
 
     updateTopCoins(); // 즉시 실행
 
-    const interval = setInterval(updateTopCoins, 300000); // 5분마다
+    const interval = setInterval(() => {
+      // ✅ 한번 더 체크
+      if (tradingMode === "top") {
+        updateTopCoins();
+      }
+    }, 300000); // 5분마다
+
     return () => clearInterval(interval);
   }, [isActive, tradingMode, updateTopCoins]);
 

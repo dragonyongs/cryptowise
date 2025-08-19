@@ -869,6 +869,14 @@ const TradingSettings = ({
                   </div>
                 </div>
               </div>
+              <div className="text-sm text-gray-600 dark:text-gray-400 mt-2">
+                업비트 원화마켓에서 거래량과 모멘텀 기준 상위 {topCoinsLimit}개 코인을 자동 선별합니다.
+                {testMode && (
+                  <span className="text-amber-600 dark:text-amber-400 ml-2">
+                    (테스트 모드에서도 설정값 {topCoinsLimit}개 사용)
+                  </span>
+                )}
+              </div>
             </div>
           )}
         </div>

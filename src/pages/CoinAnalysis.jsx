@@ -68,7 +68,7 @@ export default function CoinAnalysis() {
   // 코인 데이터 초기화
   useEffect(() => {
     if (availableCoins.length === 0) {
-      initializeData();
+      initializeData(true); // 🎯 명시적으로 forceInit=true 전달
     }
   }, [availableCoins.length, initializeData]);
 
@@ -371,8 +371,8 @@ export default function CoinAnalysis() {
               <div
                 key={coin.market}
                 className={`relative group cursor-pointer p-3 border-2 rounded-lg transition-all ${selectedCoin === coin.market
-                    ? "border-blue-500 bg-blue-50"
-                    : "border-gray-200 hover:border-gray-300"
+                  ? "border-blue-500 bg-blue-50"
+                  : "border-gray-200 hover:border-gray-300"
                   }`}
                 onClick={() => setSelectedCoin(coin.market)}
               >
@@ -534,10 +534,10 @@ const CoinSelectorModal = ({
                     onClick={() => canAdd && onAddCoin(coin.market)}
                     disabled={!canAdd}
                     className={`p-4 border rounded-lg text-left transition-all ${isSelected
-                        ? "border-green-500 bg-green-50 text-green-800"
-                        : canAdd
-                          ? "border-gray-200 hover:border-blue-500 hover:bg-blue-50"
-                          : "border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed"
+                      ? "border-green-500 bg-green-50 text-green-800"
+                      : canAdd
+                        ? "border-gray-200 hover:border-blue-500 hover:bg-blue-50"
+                        : "border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed"
                       }`}
                   >
                     <div className="flex items-center justify-between">
