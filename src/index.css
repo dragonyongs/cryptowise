@@ -200,3 +200,54 @@
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+.slider-cash::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  background: #10b981;
+  cursor: pointer;
+  border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+.slider-tier1::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  background: #3b82f6;
+  cursor: pointer;
+  border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+.slider-tier2::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  background: #8b5cf6;
+  cursor: pointer;
+  border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+.slider-tier3::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  background: #f59e0b;
+  cursor: pointer;
+  border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Dark mode slider track */
+@media (prefers-color-scheme: dark) {
+  .slider-cash::-webkit-slider-thumb,
+  .slider-tier1::-webkit-slider-thumb,
+  .slider-tier2::-webkit-slider-thumb,
+  .slider-tier3::-webkit-slider-thumb {
+    border: 2px solid #374151;
+  }
+}

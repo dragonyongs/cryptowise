@@ -1,485 +1,647 @@
-import { technicalAnalysis } from "./technicalAnalysis";
+// src/services/analysis/signalGenerator.js - 완전 개선된 테스트 모드 지원 + 성능 최적화 버전
+
+import { technicalAnalysis } from "./technicalAnalysis.js";
 
 /**
- * CryptoWise 신호 생성기
- * 기술적 분석 기반으로 매수/매도 신호를 생성합니다
+ * CryptoWise 차세대 신호 생성기
+ * - 테스트 모드와 실전 모드 완전 지원
+ * - 설정 기반 유연한 신호 생성
+ * - 성능 최적화된 분석 엔진
+ * - 코인별 맞춤형 분석 전략
  */
-
 class SignalGenerator {
   constructor() {
-    // CryptoWise 전략 가중치 [11]
+    // ✅ 기술적 분석 가중치 (검증된 비율)
     this.weights = {
       technical: {
-        rsi: 0.25, // RSI 25%
-        movingAverage: 0.2, // 이동평균 20%
-        bollinger: 0.15, // 볼링거밴드 15%
-        macd: 0.15, // MACD 15%
-        volume: 0.1, // 거래량 10%
-        support: 0.15, // 지지저항 15%
+        rsi: 0.25, // RSI 25% - 과매수/과매도 핵심 지표
+        movingAverage: 0.2, // 이동평균 20% - 추세 확인
+        bollinger: 0.15, // 볼링거밴드 15% - 변동성 측정
+        macd: 0.15, // MACD 15% - 모멘텀 분석
+        volume: 0.1, // 거래량 10% - 강도 측정
+        support: 0.15, // 지지저항 15% - 가격 레벨
       },
     };
 
-    // ✅ 기본 신호 임계값 (설정으로 오버라이드 가능)
+    // ✅ 실전 모드 기본 임계값 (엄격한 기준)
     this.defaultThresholds = {
-      minBuyScore: 7.5, // 기본 매수 점수
-      minSellScore: 6.0, // 매도 점수
-      strongBuyScore: 9.0, // 강력매수 9점 이상
+      minBuyScore: 7.5, // 매수 최소 점수
+      minSellScore: 6.0, // 매도 최소 점수
+      strongBuyScore: 9.0, // 강력매수 점수
       maxScore: 10.0, // 최대 점수
+      rsiOversold: 30, // RSI 과매도
+      rsiOverbought: 70, // RSI 과매수
     };
 
-    // 코인별 특별 조건 [11]
+    // ✅ 테스트 모드 완화된 임계값
+    this.testModeThresholds = {
+      minBuyScore: 6.0, // 7.5 → 6.0으로 완화
+      minSellScore: 4.5, // 6.0 → 4.5로 완화
+      strongBuyScore: 8.0, // 9.0 → 8.0으로 완화
+      maxScore: 10.0, // 동일 유지
+      rsiOversold: 35, // 30 → 35로 완화
+      rsiOverbought: 65, // 70 → 65로 완화
+    };
+
+    // 코인별 특수 규칙
     this.coinSpecificRules = {
       BTC: {
         rsiOversold: 35,
         rsiOverbought: 75,
         volumeMultiplier: 1.2,
+        volatilityThreshold: 0.05,
       },
       ETH: {
         rsiOversold: 30,
         rsiOverbought: 70,
         volumeMultiplier: 1.5,
+        volatilityThreshold: 0.06,
       },
       XRP: {
         rsiOversold: 25,
         rsiOverbought: 75,
         volumeMultiplier: 2.0,
+        volatilityThreshold: 0.08,
+      },
+      SOL: {
+        rsiOversold: 28,
+        rsiOverbought: 72,
+        volumeMultiplier: 1.8,
+        volatilityThreshold: 0.07,
       },
     };
+
+    // ✅ 현재 모드 설정
+    this.isTestMode = false;
+    this.currentThresholds = { ...this.defaultThresholds };
+
+    // 성능 최적화
+    this.scoreCache = new Map();
+    this.lastCacheClean = Date.now();
+    this.cacheLifetime = 60000; // 1분 캐시 유효시간
+
+    // 디버그 모드
+    this.debugMode = process.env.NODE_ENV === "development";
   }
 
-  /**
-   * ✅ 설정 기반 신호 생성 함수 (새로 추가)
-   */
+  // ✅ 테스트 모드 설정
+  setTestMode(isTestMode = false) {
+    this.isTestMode = isTestMode;
+    this.currentThresholds = isTestMode
+      ? { ...this.testModeThresholds }
+      : { ...this.defaultThresholds };
+
+    this.log(`🔄 신호생성기 ${isTestMode ? "테스트" : "실전"} 모드 전환`);
+    this.log(
+      `📊 임계값: 매수 ${this.currentThresholds.minBuyScore}점, 강매수 ${this.currentThresholds.strongBuyScore}점`
+    );
+
+    // 캐시 초기화 (모드 변경시)
+    this.scoreCache.clear();
+
+    return this;
+  }
+
+  // ✅ 로깅 유틸리티
+  log(message, level = "info") {
+    if (!this.debugMode && level === "debug") return;
+
+    const timestamp = new Date().toLocaleTimeString();
+    const prefix = this.isTestMode ? "[테스트신호]" : "[실전신호]";
+    console.log(`${timestamp} ${prefix} ${message}`);
+  }
+
+  // ✅ 설정 기반 신호 생성 (메인 함수)
   async generateSignalsWithSettings(marketDataArray, userSettings = {}) {
-    console.log("🎯 설정 기반 신호 생성:", marketDataArray.length, "개 코인");
-    console.log("📋 사용자 설정:", userSettings);
+    try {
+      this.log(`🎯 설정 기반 신호 생성 시작: ${marketDataArray.length}개 코인`);
+      this.cleanCache(); // 캐시 정리
 
-    const signals = [];
-    const thresholds = { ...this.defaultThresholds, ...userSettings };
+      const signals = [];
+      const effectiveSettings = this.mergeSettings(userSettings);
 
-    for (const marketData of marketDataArray) {
-      try {
-        const signal = await this.analyzeSymbolWithSettings(
-          marketData,
-          thresholds
-        );
-        if (signal && signal.totalScore >= thresholds.minBuyScore) {
+      // ✅ 병렬 처리로 성능 최적화
+      const promises = marketDataArray.map((marketData) =>
+        this.analyzeSymbolWithSettings(marketData, effectiveSettings).catch(
+          (error) => {
+            this.log(
+              `❌ ${marketData.symbol} 분석 오류: ${error.message}`,
+              "error"
+            );
+            return null;
+          }
+        )
+      );
+
+      const results = await Promise.all(promises);
+
+      // 유효한 신호만 필터링
+      for (const signal of results) {
+        if (signal && signal.totalScore >= effectiveSettings.minBuyScore) {
           signals.push(signal);
-          console.log(
-            `✅ 신호 생성: ${signal.symbol} ${signal.type} (${signal.totalScore.toFixed(1)}점) - 설정: ${userSettings.strategy || "default"}`
+          this.log(
+            `✅ 신호 생성: ${signal.symbol} ${signal.type} (${signal.totalScore.toFixed(1)}점) - ${this.isTestMode ? "테스트" : "실전"}`,
+            "info"
           );
         }
-      } catch (error) {
-        console.error(
-          `❌ 신호 생성 오류 (${marketData.symbol}):`,
-          error.message
-        );
+      }
+
+      // 점수 높은 순으로 정렬
+      const sortedSignals = signals.sort((a, b) => b.totalScore - a.totalScore);
+
+      this.log(
+        `📈 최종 신호: ${sortedSignals.length}개 생성 (상위 5개: ${sortedSignals
+          .slice(0, 5)
+          .map((s) => `${s.symbol}:${s.totalScore.toFixed(1)}`)
+          .join(", ")})`
+      );
+
+      return sortedSignals;
+    } catch (error) {
+      this.log(`❌ 신호 생성 전체 오류: ${error.message}`, "error");
+      return [];
+    }
+  }
+
+  // ✅ 설정 병합 (테스트 모드 고려)
+  mergeSettings(userSettings) {
+    const baseSettings = { ...this.currentThresholds };
+    const mergedSettings = { ...baseSettings, ...userSettings };
+
+    // 테스트 모드에서 추가 완화
+    if (this.isTestMode) {
+      mergedSettings.confidenceBoost = 0.5; // 신뢰도 보정
+      mergedSettings.scoreMultiplier = 1.1; // 점수 보정
+      mergedSettings.strategy = `${userSettings.strategy || "default"}_test`;
+    }
+
+    return mergedSettings;
+  }
+
+  // ✅ 개별 코인 분석 (설정 기반)
+  async analyzeSymbolWithSettings(marketData, settings) {
+    if (!marketData || !marketData.symbol) {
+      throw new Error("잘못된 시장 데이터");
+    }
+
+    const { symbol, price, volume24h, rsi, macd, bollinger } = marketData;
+
+    // 캐시 확인
+    const cacheKey = `${symbol}_${JSON.stringify(settings)}_${this.isTestMode}`;
+    if (this.scoreCache.has(cacheKey)) {
+      const cached = this.scoreCache.get(cacheKey);
+      if (Date.now() - cached.timestamp < this.cacheLifetime) {
+        return { ...cached.signal, timestamp: new Date() };
       }
     }
 
-    // 점수 높은 순으로 정렬
-    return signals.sort((a, b) => b.totalScore - a.totalScore);
-  }
+    try {
+      // 1. 기술적 분석 점수 계산
+      const technicalScores = this.calculateTechnicalScores(marketData);
 
-  /**
-   * ✅ 설정 기반 개별 코인 분석 (새로 추가)
-   */
-  async analyzeSymbolWithSettings(marketData, settings) {
-    const { symbol, price, volume24h, rsi, macd, bollinger } = marketData;
+      // 2. 총점 계산 (테스트 모드 보정 적용)
+      let totalScore = this.calculateTotalScore(technicalScores);
+      if (this.isTestMode && settings.scoreMultiplier) {
+        totalScore *= settings.scoreMultiplier;
+        totalScore = Math.min(totalScore, settings.maxScore || 10.0);
+      }
 
-    // 1. 기술적 분석 점수 계산
-    const technicalScores = this.calculateTechnicalScores(marketData);
-
-    // 2. 총점 계산
-    const totalScore = this.calculateTotalScore(technicalScores);
-
-    // 3. 설정 기반 신호 유형 결정
-    const signalType = this.determineSignalTypeWithSettings(
-      marketData,
-      totalScore,
-      settings
-    );
-
-    if (!signalType) return null;
-
-    // 4. 신호 객체 생성
-    return {
-      symbol,
-      type: signalType,
-      price,
-      totalScore,
-      technicalScore: totalScore,
-      fundamentalScore: 0,
-      marketScore: 0,
-      riskScore: this.calculateRiskScore(marketData),
-      timestamp: new Date(),
-      reason: this.generateReasonWithSettings(
+      // 3. 신호 유형 결정
+      const signalType = this.determineSignalTypeWithSettings(
         marketData,
-        signalType,
         totalScore,
         settings
-      ),
-      confidence: this.calculateConfidence(totalScore),
-      volume24h,
-      indicators: {
-        rsi: marketData.rsi,
-        macd: marketData.macd,
-        bollinger: marketData.bollinger,
-      },
-      settings: settings, // ✅ 사용된 설정 포함
-    };
+      );
+      if (!signalType) return null;
+
+      // 4. 신호 객체 생성
+      const signal = {
+        id: `${symbol}_${Date.now()}`,
+        symbol,
+        type: signalType,
+        price,
+        totalScore: Number(totalScore.toFixed(2)),
+        technicalScore: Number(totalScore.toFixed(2)),
+        fundamentalScore: 0, // 향후 확장용
+        marketScore: 0, // 향후 확장용
+        riskScore: this.calculateRiskScore(marketData),
+        timestamp: new Date(),
+        reason: this.generateReasonWithSettings(
+          marketData,
+          signalType,
+          totalScore,
+          settings
+        ),
+        confidence: this.calculateConfidence(totalScore, settings),
+        volume24h,
+        indicators: {
+          rsi: rsi || null,
+          macd: macd || null,
+          bollinger: bollinger || null,
+        },
+        coinRules:
+          this.coinSpecificRules[symbol] || this.coinSpecificRules["ETH"],
+        settings: {
+          strategy:
+            settings.strategy ||
+            (this.isTestMode ? "test_default" : "live_default"),
+          mode: this.isTestMode ? "TEST" : "LIVE",
+          thresholds: { ...settings },
+        },
+        metadata: {
+          analysisTime: Date.now(),
+          version: "2.0.0",
+          generator: "CryptoWise_SignalGenerator",
+        },
+      };
+
+      // 캐시에 저장
+      this.scoreCache.set(cacheKey, {
+        signal,
+        timestamp: Date.now(),
+      });
+
+      return signal;
+    } catch (error) {
+      this.log(`❌ ${symbol} 분석 중 오류: ${error.message}`, "error");
+      return null;
+    }
   }
 
-  /**
-   * ✅ 설정 기반 신호 유형 결정 (새로 추가)
-   */
+  // ✅ 신호 유형 결정 (테스트 모드 고려)
   determineSignalTypeWithSettings(marketData, totalScore, settings) {
-    const { rsi } = marketData;
+    const { symbol, rsi } = marketData;
+    const coinRules =
+      this.coinSpecificRules[symbol] || this.coinSpecificRules["ETH"];
 
-    console.log(
-      `🔍 ${marketData.symbol} 신호판단: 점수=${totalScore.toFixed(2)}, RSI=${rsi?.toFixed(1)}, 최소점수=${settings.minBuyScore}`
+    this.log(
+      `🔍 ${symbol} 신호판단: 점수=${totalScore.toFixed(2)}, RSI=${rsi?.toFixed(1)}, 최소=${settings.minBuyScore}, 모드=${this.isTestMode ? "TEST" : "LIVE"}`,
+      "debug"
     );
 
-    // 매수 신호 조건 (설정 기반)
+    // 매수 신호 조건
     if (totalScore >= settings.minBuyScore) {
-      if (rsi && rsi < (settings.rsiOverbought || 75)) {
-        console.log(`✅ ${marketData.symbol} 매수신호 발생! (설정 기반)`);
+      const rsiLimit = this.isTestMode
+        ? settings.rsiOverbought || coinRules.rsiOverbought || 65
+        : settings.rsiOverbought || coinRules.rsiOverbought || 70;
+
+      if (!rsi || rsi < rsiLimit) {
+        const signalStrength =
+          totalScore >= settings.strongBuyScore ? "STRONG_BUY" : "BUY";
+        this.log(
+          `✅ ${symbol} ${signalStrength} 신호 발생! (점수: ${totalScore.toFixed(1)}, RSI: ${rsi?.toFixed(1)})`,
+          "info"
+        );
         return "BUY";
       }
     }
 
-    // 매도 신호 조건 (설정 기반)
-    if (
-      totalScore <= (settings.minSellScore || 3) ||
-      (rsi && rsi > (settings.rsiOverbought || 80))
-    ) {
+    // 매도 신호 조건
+    const sellThreshold = this.isTestMode
+      ? settings.minSellScore || 4.5
+      : settings.minSellScore || 6.0;
+
+    const rsiSellLimit = this.isTestMode ? 75 : 80;
+
+    if (totalScore <= sellThreshold || (rsi && rsi > rsiSellLimit)) {
+      this.log(
+        `📉 ${symbol} SELL 신호 (점수: ${totalScore.toFixed(1)}, RSI: ${rsi?.toFixed(1)})`,
+        "info"
+      );
       return "SELL";
     }
 
+    this.log(`⏸️ ${symbol} 신호 없음 (대기)`, "debug");
     return null;
   }
 
-  /**
-   * ✅ 설정 기반 사유 생성 (새로 추가)
-   */
+  // ✅ 사유 생성 (테스트 모드 표시)
   generateReasonWithSettings(marketData, signalType, totalScore, settings) {
     const { symbol, rsi, volume24h, avgVolume } = marketData;
     const volumeRatio =
-      volume24h && avgVolume ? (volume24h / avgVolume).toFixed(1) : "?";
+      volume24h && avgVolume ? (volume24h / avgVolume).toFixed(1) : "미상";
+    const modeLabel = this.isTestMode ? "테스트" : "실전";
+    const strategyLabel = settings.strategy || "default";
 
     if (signalType === "BUY") {
       if (totalScore >= (settings.strongBuyScore || 9.0)) {
-        return `${symbol} 강력매수: 종합점수 ${totalScore.toFixed(1)}점, RSI ${rsi?.toFixed(1)}, 거래량 ${volumeRatio}배 (${settings.strategy || "default"} 전략)`;
+        return `${symbol} 강력매수 [${modeLabel}]: 종합점수 ${totalScore.toFixed(1)}점, RSI ${rsi?.toFixed(1)}, 거래량 ${volumeRatio}배 (${strategyLabel} 전략)`;
       } else {
-        return `${symbol} 매수: 종합점수 ${totalScore.toFixed(1)}점, RSI ${rsi?.toFixed(1)} (${settings.strategy || "default"} 전략)`;
+        return `${symbol} 매수 [${modeLabel}]: 종합점수 ${totalScore.toFixed(1)}점, RSI ${rsi?.toFixed(1)} (${strategyLabel} 전략)`;
       }
     } else if (signalType === "SELL") {
-      return `${symbol} 매도: 기술적 과열, RSI ${rsi?.toFixed(1)} (${settings.strategy || "default"} 전략)`;
+      return `${symbol} 매도 [${modeLabel}]: 기술적 과열 감지, RSI ${rsi?.toFixed(1)} (${strategyLabel} 전략)`;
     }
 
-    return `${symbol} 분석완료 (${settings.strategy || "default"})`;
+    return `${symbol} 분석완료 [${modeLabel}] (${strategyLabel})`;
   }
 
-  /**
-   * 메인 신호 생성 함수 (기존 호환성 유지)
-   */
-  async generateSignals(marketDataArray, strategy = "cryptowise") {
-    console.log("🎯 신호 생성 시작:", marketDataArray.length, "개 코인");
-    const signals = [];
-
-    for (const marketData of marketDataArray) {
-      try {
-        const signal = await this.analyzeSymbol(marketData, strategy);
-        if (signal && signal.totalScore >= this.defaultThresholds.minBuyScore) {
-          signals.push(signal);
-          console.log(
-            `✅ 신호 생성: ${signal.symbol} ${signal.type} (${signal.totalScore.toFixed(1)}점)`
-          );
-        }
-      } catch (error) {
-        console.error(
-          `❌ 신호 생성 오류 (${marketData.symbol}):`,
-          error.message
-        );
-      }
-    }
-
-    return signals.sort((a, b) => b.totalScore - a.totalScore);
-  }
-
-  /**
-   * 개별 코인 분석 (기존 코드 유지)
-   */
-  async analyzeSymbol(marketData, strategy) {
-    const { symbol, price, volume24h, rsi, macd, bollinger } = marketData;
-
-    // 1. 기술적 분석 점수 계산
-    const technicalScores = this.calculateTechnicalScores(marketData);
-
-    // 2. 총점 계산
-    const totalScore = this.calculateTotalScore(technicalScores);
-
-    // 3. 신호 유형 결정
-    const signalType = this.determineSignalType(marketData, totalScore);
-
-    if (!signalType) return null;
-
-    // 4. 신호 객체 생성
-    return {
-      symbol,
-      type: signalType,
-      price,
-      totalScore,
-      technicalScore: totalScore,
-      fundamentalScore: 0,
-      marketScore: 0,
-      riskScore: this.calculateRiskScore(marketData),
-      timestamp: new Date(),
-      reason: this.generateReason(marketData, signalType, totalScore),
-      confidence: this.calculateConfidence(totalScore),
-      volume24h,
-      indicators: {
-        rsi: marketData.rsi,
-        macd: marketData.macd,
-        bollinger: marketData.bollinger,
-      },
-    };
-  }
-
-  /**
-   * 기술적 분석 점수 계산 [11]
-   */
+  // ✅ 기술적 점수 계산 (최적화된 버전)
   calculateTechnicalScores(marketData) {
-    const { symbol, price, volume24h, rsi, macd, bollinger } = marketData;
-    const rules =
+    const {
+      symbol,
+      price,
+      volume24h,
+      rsi,
+      macd,
+      bollinger,
+      ma20,
+      ma60,
+      support,
+      resistance,
+      avgVolume,
+    } = marketData;
+
+    const coinRules =
       this.coinSpecificRules[symbol] || this.coinSpecificRules["ETH"];
 
     const scores = {
-      rsi: this.calculateRsiScore(rsi, rules),
-      movingAverage: this.calculateMovingAverageScore(marketData),
+      rsi: this.calculateRsiScore(rsi, coinRules),
+      movingAverage: this.calculateMovingAverageScore({ price, ma20, ma60 }),
       bollinger: this.calculateBollingerScore(bollinger, price),
       macd: this.calculateMacdScore(macd),
-      volume: this.calculateVolumeScore(volume24h, marketData.avgVolume),
-      support: this.calculateSupportResistanceScore(marketData),
+      volume: this.calculateVolumeScore(
+        volume24h,
+        avgVolume,
+        coinRules.volumeMultiplier
+      ),
+      support: this.calculateSupportResistanceScore({
+        price,
+        support,
+        resistance,
+      }),
     };
 
     const totalScore = this.calculateTotalScore(scores);
 
-    console.log(`🎯 ${symbol} 신호분석:`, {
-      price: price,
-      rsi: rsi?.toFixed(1),
-      totalScore: totalScore.toFixed(2),
-      threshold: this.defaultThresholds.minBuyScore,
-      willBuy: totalScore >= this.defaultThresholds.minBuyScore,
-      scores: Object.fromEntries(
-        Object.entries(scores).map(([key, value]) => [key, value.toFixed(1)])
-      ),
-    });
+    this.log(
+      `🎯 ${symbol} 기술적분석: RSI=${scores.rsi.toFixed(1)}, MA=${scores.movingAverage.toFixed(1)}, 볼링거=${scores.bollinger.toFixed(1)}, MACD=${scores.macd.toFixed(1)}, 거래량=${scores.volume.toFixed(1)}, 지지저항=${scores.support.toFixed(1)} → 총점=${totalScore.toFixed(2)}`,
+      "debug"
+    );
 
     return scores;
   }
 
-  /**
-   * RSI 점수 계산
-   */
+  // ✅ RSI 점수 계산 (향상된 버전)
   calculateRsiScore(rsi, rules) {
-    if (!rsi) return 0;
+    if (!rsi || isNaN(rsi)) return 5.0; // 중간값
 
-    if (rsi <= rules.rsiOversold) {
-      return 10;
-    } else if (rsi <= rules.rsiOversold + 10) {
-      return 7;
-    } else if (rsi >= rules.rsiOverbought) {
-      return 0;
-    } else if (rsi >= rules.rsiOverbought - 10) {
-      return 3;
+    const { rsiOversold, rsiOverbought } = rules;
+
+    if (rsi <= rsiOversold) {
+      return 10.0; // 과매도 - 강력 매수 신호
+    } else if (rsi <= rsiOversold + 5) {
+      return 8.5; // 과매도 근처
+    } else if (rsi <= rsiOversold + 10) {
+      return 7.0; // 약간 과매도
+    } else if (rsi >= rsiOverbought) {
+      return 0.0; // 과매수 - 매도 신호
+    } else if (rsi >= rsiOverbought - 5) {
+      return 2.0; // 과매수 근처
+    } else if (rsi >= rsiOverbought - 10) {
+      return 3.5; // 약간 과매수
     } else {
-      return 5;
+      return 5.0; // 중간 영역
     }
   }
 
-  /**
-   * 이동평균 점수 계산
-   */
-  calculateMovingAverageScore(marketData) {
-    const { price, ma20, ma60 } = marketData;
-    if (!ma20 || !ma60) return 5;
+  // ✅ 이동평균 점수 계산
+  calculateMovingAverageScore(data) {
+    const { price, ma20, ma60 } = data;
+    if (!price || !ma20 || !ma60) return 5.0;
 
     if (price > ma20 && ma20 > ma60) {
-      return 10;
+      return 10.0; // 골든 크로스 상태
     } else if (price < ma20 && ma20 < ma60) {
-      return 0;
+      return 0.0; // 데드 크로스 상태
     } else if (price > ma20 && price < ma60) {
-      return 6;
+      return 6.5; // 혼재 상태 - 약간 긍정적
+    } else if (price < ma20 && price > ma60) {
+      return 4.0; // 혼재 상태 - 약간 부정적
     } else {
-      return 4;
+      return 5.0; // 중간
     }
   }
 
-  /**
-   * 볼링거밴드 점수 계산
-   */
+  // ✅ 볼링거밴드 점수 계산
   calculateBollingerScore(bollinger, price) {
-    if (!bollinger || !price) return 5;
+    if (!bollinger || !price) return 5.0;
 
     const { upper, middle, lower } = bollinger;
+    if (!upper || !middle || !lower) return 5.0;
 
-    if (price <= lower * 1.02) {
-      return 10;
+    if (price <= lower * 1.01) {
+      return 10.0; // 하단 밴드 터치 - 강력 매수
+    } else if (price <= lower * 1.03) {
+      return 8.5; // 하단 밴드 근처
     } else if (price <= lower * 1.05) {
-      return 8;
-    } else if (price >= upper * 0.98) {
-      return 0;
+      return 7.0; // 하단 근처
+    } else if (price >= upper * 0.99) {
+      return 0.0; // 상단 밴드 터치 - 매도 신호
+    } else if (price >= upper * 0.97) {
+      return 2.0; // 상단 밴드 근처
+    } else if (price >= middle) {
+      return 6.0; // 중간선 위
     } else {
-      return 5;
+      return 4.0; // 중간선 아래
     }
   }
 
-  /**
-   * MACD 점수 계산
-   */
+  // ✅ MACD 점수 계산
   calculateMacdScore(macd) {
-    if (!macd) return 5;
+    if (!macd) return 5.0;
 
     const { line, signal, histogram } = macd;
+    if (line === undefined || signal === undefined) return 5.0;
 
     if (line > signal && histogram > 0) {
-      return 10;
+      return 10.0; // 강력한 상승 신호
+    } else if (line > signal && histogram <= 0) {
+      return 7.5; // 상승 신호이지만 히스토그램 약화
     } else if (line < signal && histogram < 0) {
-      return 0;
+      return 0.0; // 강력한 하락 신호
+    } else if (line < signal && histogram >= 0) {
+      return 2.5; // 하락 신호이지만 히스토그램 개선
     } else if (line > signal) {
-      return 7;
+      return 6.5; // 약간 긍정적
     } else {
-      return 3;
+      return 3.5; // 약간 부정적
     }
   }
 
-  /**
-   * 거래량 점수 계산
-   */
-  calculateVolumeScore(volume24h, avgVolume) {
-    if (!volume24h || !avgVolume) return 5;
+  // ✅ 거래량 점수 계산
+  calculateVolumeScore(volume24h, avgVolume, multiplier = 1.0) {
+    if (!volume24h || !avgVolume) return 5.0;
 
-    const volumeRatio = volume24h / avgVolume;
+    const volumeRatio = (volume24h / avgVolume) * multiplier;
 
-    if (volumeRatio >= 2.0) {
-      return 10;
+    if (volumeRatio >= 2.5) {
+      return 10.0; // 폭증 거래량
+    } else if (volumeRatio >= 2.0) {
+      return 9.0; // 매우 높은 거래량
     } else if (volumeRatio >= 1.5) {
-      return 8;
+      return 8.0; // 높은 거래량
+    } else if (volumeRatio >= 1.2) {
+      return 6.5; // 평균 이상
     } else if (volumeRatio >= 0.8) {
-      return 5;
+      return 5.0; // 평균 수준
+    } else if (volumeRatio >= 0.5) {
+      return 3.0; // 낮은 거래량
     } else {
-      return 2;
+      return 1.0; // 매우 낮은 거래량
     }
   }
 
-  /**
-   * 지지저항 점수 계산
-   */
-  calculateSupportResistanceScore(marketData) {
-    const { price, support, resistance } = marketData;
-    if (!support || !resistance) return 5;
+  // ✅ 지지저항 점수 계산
+  calculateSupportResistanceScore(data) {
+    const { price, support, resistance } = data;
+    if (!price || !support || !resistance) return 5.0;
 
-    const supportDistance = (price - support) / support;
-    const resistanceDistance = (resistance - price) / price;
+    const supportDistance = ((price - support) / support) * 100;
+    const resistanceDistance = ((resistance - price) / price) * 100;
 
-    if (supportDistance <= 0.03 && supportDistance >= 0) {
-      return 10;
-    } else if (resistanceDistance <= 0.03) {
-      return 2;
+    if (supportDistance <= 2.0 && supportDistance >= 0) {
+      return 10.0; // 지지선 근처에서 반등
+    } else if (supportDistance <= 5.0 && supportDistance >= 0) {
+      return 8.0; // 지지선 근처
+    } else if (resistanceDistance <= 2.0) {
+      return 2.0; // 저항선 근처
+    } else if (resistanceDistance <= 5.0) {
+      return 4.0; // 저항선 접근
     } else {
-      return 5;
+      return 5.0; // 중간 영역
     }
   }
 
-  /**
-   * 총점 계산
-   */
+  // ✅ 총점 계산
   calculateTotalScore(technicalScores) {
     let totalScore = 0;
+
     for (const [indicator, score] of Object.entries(technicalScores)) {
       const weight = this.weights.technical[indicator] || 0;
-      totalScore += score * weight;
+      const adjustedScore = Math.max(0, Math.min(10, score || 0)); // 0-10 범위 보장
+      totalScore += adjustedScore * weight;
     }
 
-    return Math.min(Math.max(totalScore, 0), this.defaultThresholds.maxScore);
+    return Math.min(Math.max(totalScore, 0), this.currentThresholds.maxScore);
   }
 
-  /**
-   * 신호 유형 결정 (기존 코드)
-   */
-  determineSignalType(marketData, totalScore) {
-    const { rsi } = marketData;
-
-    console.log(
-      `🔍 ${marketData.symbol} 신호판단: 점수=${totalScore.toFixed(2)}, RSI=${rsi?.toFixed(1)}`
-    );
-
-    if (totalScore >= 5.0) {
-      if (rsi && rsi < 80) {
-        console.log(`✅ ${marketData.symbol} 매수신호 발생!`);
-        return "BUY";
-      }
-    }
-
-    if (totalScore <= 3 || (rsi && rsi > 85)) {
-      return "SELL";
-    }
-
-    return null;
-  }
-
-  /**
-   * 위험 점수 계산
-   */
+  // ✅ 위험 점수 계산
   calculateRiskScore(marketData) {
-    const { rsi, volume24h, avgVolume } = marketData;
-    let riskScore = 5;
+    const { rsi, volume24h, avgVolume, price } = marketData;
+    let riskScore = 5.0; // 기본 위험도
 
-    if (rsi > 80 || rsi < 20) riskScore += 2;
-    if (volume24h && avgVolume && volume24h > avgVolume * 3) {
-      riskScore += 1;
-    }
-
-    return Math.min(Math.max(riskScore, 1), 10);
-  }
-
-  /**
-   * 신뢰도 계산
-   */
-  calculateConfidence(totalScore) {
-    if (totalScore >= this.defaultThresholds.strongBuyScore) return "HIGH";
-    if (totalScore >= this.defaultThresholds.minBuyScore) return "MEDIUM";
-    if (totalScore >= this.defaultThresholds.minSellScore) return "LOW";
-    return "VERY_LOW";
-  }
-
-  /**
-   * 신호 사유 생성 (기존 코드)
-   */
-  generateReason(marketData, signalType, totalScore) {
-    const { symbol, rsi, volume24h, avgVolume } = marketData;
-    const volumeRatio =
-      volume24h && avgVolume ? (volume24h / avgVolume).toFixed(1) : "?";
-
-    if (signalType === "BUY") {
-      if (totalScore >= this.defaultThresholds.strongBuyScore) {
-        return `${symbol} 강력매수: 종합점수 ${totalScore.toFixed(1)}점, RSI ${rsi?.toFixed(1)}, 거래량 ${volumeRatio}배`;
-      } else {
-        return `${symbol} 매수: 종합점수 ${totalScore.toFixed(1)}점, RSI ${rsi?.toFixed(1)}`;
+    // RSI 극값 시 위험도 증가
+    if (rsi) {
+      if (rsi > 80 || rsi < 20) {
+        riskScore += 2.0;
+      } else if (rsi > 75 || rsi < 25) {
+        riskScore += 1.0;
       }
-    } else if (signalType === "SELL") {
-      return `${symbol} 매도: 기술적 과열, RSI ${rsi?.toFixed(1)}`;
     }
 
-    return `${symbol} 분석완료`;
+    // 거래량 급증 시 위험도 증가
+    if (volume24h && avgVolume) {
+      const volumeRatio = volume24h / avgVolume;
+      if (volumeRatio > 5.0) {
+        riskScore += 2.0;
+      } else if (volumeRatio > 3.0) {
+        riskScore += 1.0;
+      }
+    }
+
+    // 테스트 모드에서 위험도 완화
+    if (this.isTestMode) {
+      riskScore *= 0.8; // 20% 완화
+    }
+
+    return Math.min(Math.max(riskScore, 1.0), 10.0);
+  }
+
+  // ✅ 신뢰도 계산 (테스트 모드 고려)
+  calculateConfidence(totalScore, settings) {
+    // 테스트 모드에서 신뢰도 보정
+    let effectiveScore = totalScore;
+    if (this.isTestMode && settings.confidenceBoost) {
+      effectiveScore += settings.confidenceBoost;
+    }
+
+    if (
+      effectiveScore >=
+      (settings.strongBuyScore || this.currentThresholds.strongBuyScore)
+    ) {
+      return "HIGH";
+    } else if (
+      effectiveScore >=
+      (settings.minBuyScore || this.currentThresholds.minBuyScore)
+    ) {
+      return "MEDIUM";
+    } else if (
+      effectiveScore >=
+      (settings.minSellScore || this.currentThresholds.minSellScore)
+    ) {
+      return "LOW";
+    } else {
+      return "VERY_LOW";
+    }
+  }
+
+  // ✅ 캐시 정리
+  cleanCache() {
+    const now = Date.now();
+    if (now - this.lastCacheClean < 300000) return; // 5분마다만 정리
+
+    let cleanedCount = 0;
+    for (const [key, value] of this.scoreCache.entries()) {
+      if (now - value.timestamp > this.cacheLifetime) {
+        this.scoreCache.delete(key);
+        cleanedCount++;
+      }
+    }
+
+    if (cleanedCount > 0) {
+      this.log(
+        `🧹 캐시 정리: ${cleanedCount}개 항목 제거, 현재 ${this.scoreCache.size}개 유지`,
+        "debug"
+      );
+    }
+
+    this.lastCacheClean = now;
+  }
+
+  // ✅ 기존 호환성 유지 함수들
+  async generateSignals(marketDataArray, strategy = "cryptowise") {
+    return this.generateSignalsWithSettings(marketDataArray, { strategy });
+  }
+
+  async analyzeSymbol(marketData, strategy) {
+    return this.analyzeSymbolWithSettings(marketData, { strategy });
+  }
+
+  // ✅ 설정 조회
+  getCurrentSettings() {
+    return {
+      mode: this.isTestMode ? "TEST" : "LIVE",
+      thresholds: { ...this.currentThresholds },
+      weights: { ...this.weights },
+      coinRules: { ...this.coinSpecificRules },
+      cacheSize: this.scoreCache.size,
+    };
+  }
+
+  // ✅ 성능 통계
+  getPerformanceStats() {
+    return {
+      cacheSize: this.scoreCache.size,
+      cacheHitRate: this.cacheHitRate || 0,
+      avgAnalysisTime: this.avgAnalysisTime || 0,
+      totalAnalyses: this.totalAnalyses || 0,
+    };
   }
 }
 
-// 싱글톤 인스턴스 생성
+// ✅ 싱글톤 인스턴스 생성 및 익스포트
 export const signalGenerator = new SignalGenerator();
-
-// 기본 내보내기
 export default signalGenerator;
 
 // 편의 함수들
@@ -488,8 +650,11 @@ export const generateSignals =
 export const analyzeSymbol =
   signalGenerator.analyzeSymbol.bind(signalGenerator);
 
-// ✅ 새로 추가된 설정 기반 함수들
+// ✅ 새로운 설정 기반 함수들
 export const generateSignalsWithSettings =
   signalGenerator.generateSignalsWithSettings.bind(signalGenerator);
 export const analyzeSymbolWithSettings =
   signalGenerator.analyzeSymbolWithSettings.bind(signalGenerator);
+export const setTestMode = signalGenerator.setTestMode.bind(signalGenerator);
+export const getCurrentSettings =
+  signalGenerator.getCurrentSettings.bind(signalGenerator);
