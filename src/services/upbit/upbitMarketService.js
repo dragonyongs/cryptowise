@@ -74,14 +74,28 @@ class UpbitMarketService {
     this.stats.totalApiCalls++;
 
     try {
-      const response = await fetch(url, {
+      // ✅ 업비트 API URL을 프록시 URL로 변환
+      let fetchUrl;
+
+      if (url.includes("api.upbit.com/v1/market/all")) {
+        fetchUrl = "/api/upbit-proxy?endpoint=market/all";
+      } else if (url.includes("api.upbit.com/v1/ticker")) {
+        // URL에서 markets 파라미터 추출
+        const urlObj = new URL(url);
+        const markets = urlObj.searchParams.get("markets");
+        fetchUrl = `/api/upbit-proxy?endpoint=ticker&markets=${encodeURIComponent(markets)}`;
+      } else {
+        fetchUrl = url; // 다른 API는 그대로
+      }
+
+      const response = await fetch(fetchUrl, {
         ...options,
         headers: {
           Accept: "application/json",
           "User-Agent": "CryptoWise/1.0",
           ...options.headers,
         },
-        timeout: 10000, // 10초 타임아웃
+        timeout: 10000,
       });
 
       const responseTime = Date.now() - startTime;
@@ -96,8 +110,7 @@ class UpbitMarketService {
 
       const data = await response.json();
       this.stats.lastResponse = Date.now();
-
-      this.log(`API 호출 성공: ${url} (${responseTime}ms)`, "debug");
+      this.log(`API 호출 성공: ${fetchUrl} (${responseTime}ms)`, "debug");
       return data;
     } catch (error) {
       this.stats.errorCount++;

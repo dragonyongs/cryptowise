@@ -87,7 +87,6 @@ class BatchTradingService {
   async getTopCoins() {
     const now = Date.now();
 
-    // 캐시 확인 (30분)
     if (
       this.topCoinsCache &&
       now - this.topCoinsCacheTime < this.CACHE_DURATION
@@ -97,10 +96,11 @@ class BatchTradingService {
     }
 
     console.log("🌐 실시간 상위 10개 코인 조회");
-
     try {
-      // 1단계: 전체 KRW 마켓 조회
-      const marketResponse = await fetch("https://api.upbit.com/v1/market/all");
+      // ✅ 1단계: 프록시를 통한 마켓 조회
+      const marketResponse = await fetch(
+        "/api/upbit-proxy?endpoint=market/all"
+      );
       if (!marketResponse.ok) {
         throw new Error(`마켓 조회 실패: ${marketResponse.status}`);
       }
@@ -108,25 +108,21 @@ class BatchTradingService {
       const allMarkets = await marketResponse.json();
       const krwMarkets = allMarkets
         .filter((market) => market.market.startsWith("KRW-"))
-        .filter((market) => !market.market.includes("KRW-BTC")) // BTC는 별도 처리 가능
-        .slice(0, 50); // 상위 50개만 고려
+        .filter((market) => !market.market.includes("KRW-BTC"))
+        .slice(0, 50);
 
-      // 2단계: 거래량 기준 상위 10개 선정
+      // ✅ 2단계: 프록시를 통한 티커 조회
+      const symbols = krwMarkets.slice(0, 15).map((m) => m.market);
+      const markets = symbols.join(",");
+
       console.log(
-        `📈 ${krwMarkets.length}개 KRW 마켓 중 거래량 상위 10개 선정`
-      );
-
-      const symbols = krwMarkets.slice(0, 15).map((m) => m.market); // 15개로 안전하게
-
-      // ✅ 띄어쓰기 제거하여 404 오류 방지
-      const markets = symbols.join(","); // 쉼표만, 띄어쓰기 없음
-      console.log(
-        `🔗 API 호출 URL: https://api.upbit.com/v1/ticker?markets=${markets}`
+        `🔗 프록시 API 호출: /api/upbit-proxy?endpoint=ticker&markets=${markets}`
       );
 
       const tickerResponse = await fetch(
-        `https://api.upbit.com/v1/ticker?markets=${markets}`
+        `/api/upbit-proxy?endpoint=ticker&markets=${encodeURIComponent(markets)}`
       );
+
       if (!tickerResponse.ok) {
         throw new Error(
           `시세 조회 실패: ${tickerResponse.status} - ${tickerResponse.statusText}`
@@ -135,7 +131,7 @@ class BatchTradingService {
 
       const tickerData = await tickerResponse.json();
 
-      // 3단계: 거래량 순으로 정렬하여 상위 10개 선정
+      // 나머지 로직은 동일...
       const sortedByVolume = tickerData
         .sort((a, b) => b.acc_trade_price_24h - a.acc_trade_price_24h)
         .slice(0, 10);
@@ -147,7 +143,6 @@ class BatchTradingService {
         change: coin.signed_change_rate * 100,
       }));
 
-      // 캐시 저장
       this.topCoinsCache = topCoins;
       this.topCoinsCacheTime = now;
 
@@ -155,14 +150,13 @@ class BatchTradingService {
       topCoins.forEach((coin, idx) => {
         const symbol = coin.symbol.replace("KRW-", "");
         console.log(
-          `  ${idx + 1}. ${symbol}: ${coin.volume24h.toLocaleString()}원 (${coin.change.toFixed(2)}%)`
+          ` ${idx + 1}. ${symbol}: ${coin.volume24h.toLocaleString()}원 (${coin.change.toFixed(2)}%)`
         );
       });
 
       return topCoins;
     } catch (error) {
       console.error("동적 코인 조회 실패, 기본 코인 사용:", error);
-
       // 실패 시 기본 코인 사용
       return [
         { symbol: "KRW-BTC" },
@@ -183,17 +177,16 @@ class BatchTradingService {
   async getBulkMarketData() {
     const topCoins = await this.getTopCoins();
     const symbols = topCoins.map((coin) => coin.symbol);
+    const markets = symbols.join(",");
 
-    // ✅ 중요: 띄어쓰기 제거하여 404 오류 방지
-    const markets = symbols.join(","); // "KRW-BTC,KRW-ETH,..." (띄어쓰기 없음)
-
-    console.log(`🌐 API 호출: ${symbols.length}개 동적 선정 코인`);
+    console.log(`🌐 프록시 API 호출: ${symbols.length}개 동적 선정 코인`);
     console.log(
-      `📍 요청 URL: https://api.upbit.com/v1/ticker?markets=${markets}`
+      `📍 요청 URL: /api/upbit-proxy?endpoint=ticker&markets=${markets}`
     );
 
+    // ✅ 프록시 사용
     const response = await fetch(
-      `https://api.upbit.com/v1/ticker?markets=${markets}`
+      `/api/upbit-proxy?endpoint=ticker&markets=${encodeURIComponent(markets)}`
     );
 
     if (!response.ok) {
@@ -204,7 +197,6 @@ class BatchTradingService {
 
     const data = await response.json();
     console.log(`✅ ${data.length}개 코인 데이터 수집 성공`);
-
     return data;
   }
 
