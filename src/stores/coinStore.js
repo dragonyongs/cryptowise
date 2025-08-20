@@ -218,18 +218,20 @@ class CoinDataService {
       const cached = this.cache.get(cacheKey);
       if (cached) return cached;
 
-      const response = await fetch(
-        `https://api.upbit.com/v1/ticker?markets=${marketString}`
-      );
-      if (!response.ok)
-        throw new Error(`Upbit Price API Error: ${response.status}`);
+      // ✅ 프록시 URL 사용 (CORS 해결)
+      const proxyUrl = `/api/upbit-proxy?endpoint=ticker&markets=${encodeURIComponent(marketString)}`;
+
+      const response = await fetch(proxyUrl);
+      if (!response.ok) {
+        throw new Error(`Proxy API Error: ${response.status}`);
+      }
 
       const priceData = await response.json();
       const ttl = priority === "high" ? 10_000 : API_CONFIG.CACHE_DURATION;
       this.cache.set(cacheKey, priceData, ttl);
       return priceData;
     } catch (error) {
-      console.error("Failed to fetch price data:", error);
+      console.error("Failed to fetch price data through proxy:", error);
       return [];
     }
   }
