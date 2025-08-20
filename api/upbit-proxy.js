@@ -24,6 +24,10 @@ export default async function handler(req, res) {
 
     // 다양한 엔드포인트 지원
     switch (endpoint) {
+      case "market/all":
+        upbitUrl = "https://api.upbit.com/v1/market/all";
+        break;
+
       case "ticker":
         if (!markets) {
           return res

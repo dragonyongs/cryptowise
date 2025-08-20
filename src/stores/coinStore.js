@@ -12,12 +12,12 @@ import { shallow } from "zustand/shallow";
 
 /* ---------- 상수 및 설정 ---------- */
 const API_CONFIG = {
-  UPBIT_RATE_LIMIT: 600, // 10분당 600회
-  COINGECKO_RATE_LIMIT: 50, // 1분당 50회
-  CACHE_DURATION: 30_000, // 30초
-  BATCH_SIZE: 100, // 업비트 API 배치 크기
+  UPBIT_RATE_LIMIT: 50, // ✅ 600 → 50으로 대폭 축소 (분당 50회)
+  COINGECKO_RATE_LIMIT: 30, // ✅ 50 → 30으로 축소 (더 안전)
+  CACHE_DURATION: 60_000, // ✅ 30초 → 60초로 늘려서 호출 빈도 줄이기
+  BATCH_SIZE: 50, // ✅ 100 → 50으로 줄여서 과부하 방지
   RETRY_ATTEMPTS: 3,
-  RETRY_DELAY: 1_000,
+  RETRY_DELAY: 2_000, // ✅ 1초 → 2초로 늘려서 재시도 간격 확대
 };
 
 const PLAN_LIMITS = {
@@ -180,26 +180,33 @@ class SmartDataCache {
 
 /* ---------- API 서비스 클래스 ---------- */
 class CoinDataService {
-  static upbitLimiter = new RateLimiter(API_CONFIG.UPBIT_RATE_LIMIT, 600_000);
+  static upbitLimiter = new RateLimiter(API_CONFIG.UPBIT_RATE_LIMIT, 60_000); // ✅ 600_000ms(10분) → 60_000ms(1분)으로 변경
   static cache = new SmartDataCache();
 
   static async fetchUpbitMarkets() {
     try {
+      // ① 레이트리미터 확인
       await this.upbitLimiter.canMakeRequest();
-      const cached = this.cache.get("upbit_markets");
+
+      // ② 캐시 확인
+      const cacheKey = "upbit_markets_all";
+      const cached = this.cache.get(cacheKey);
       if (cached) return cached;
 
-      const response = await fetch("https://api.upbit.com/v1/market/all");
-      if (!response.ok) throw new Error(`Upbit API Error: ${response.status}`);
+      // ③ 브라우저-직접 호출 → 프록시로 교체
+      const proxyUrl = "/api/upbit-proxy?endpoint=market/all";
+      const res = await fetch(proxyUrl);
 
-      const markets = await response.json();
-      const krwMarkets = markets.filter((m) => m.market.startsWith("KRW-"));
+      if (!res.ok) throw new Error(`Proxy API Error: ${res.status}`);
 
-      this.cache.set("upbit_markets", krwMarkets, 300_000); // 5분 캐시
-      return krwMarkets;
-    } catch (error) {
-      console.error("Failed to fetch Upbit markets:", error);
-      return [];
+      const data = await res.json();
+
+      // ④ 원본 응답 형식 유지(배열) + 30분 캐싱
+      this.cache.set(cacheKey, data, 1_800_000);
+      return data;
+    } catch (err) {
+      console.error("Failed to fetch Upbit markets through proxy:", err);
+      throw new Error("업비트 마켓 데이터 없음"); // 호출 측 로직 그대로 유지
     }
   }
 
