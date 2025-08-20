@@ -1,7 +1,8 @@
-// src/hooks/usePaperTrading.js - 관심코인 덮어쓰기 문제 완전 해결 버전
+// src/hooks/usePaperTrading.js - coinStore 동기화 완전 해결 버전
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useCoinStore } from "../stores/coinStore.js";
+import hybridSignalGenerator from "../services/analysis/hybridSignalGenerator.js";
 
 // ✅ 최신 백엔드 서비스들
 import { paperTradingEngine } from "../services/testing/paperTradingEngine.js";
@@ -21,7 +22,16 @@ export const usePaperTrading = (
 ) => {
   // 🎯 핵심 개선: Store 지연 로딩으로 자동 초기화 방지
   const [isStoreInitialized, setIsStoreInitialized] = useState(false);
-  const { setSelectedCoins, initializeData } = useCoinStore();
+
+  // 🔍 coinStore에서 selectedCoins를 가져와서 동기화
+  const {
+    selectedCoins: storeSelectedCoins,
+    isInitialized,
+    initializeData,
+    refreshData,
+    addCoin: addCoinToStore,
+    removeCoin: removeCoinFromStore,
+  } = useCoinStore();
 
   // 🎯 핵심 개선: 모드별 상태 완전 분리
   const [favoriteCoins, setFavoriteCoins] = useState([]);
@@ -33,7 +43,7 @@ export const usePaperTrading = (
   const [lastSignal, setLastSignal] = useState(null);
   const [marketData, setMarketData] = useState(new Map());
   const [marketCondition, setMarketCondition] = useState(null);
-  const [tradingMode, setTradingMode] = useState("top");
+  const [tradingMode, setTradingMode] = useState("favorites"); // 기본값을 favorites로 변경
   const [topCoinsLimit, setTopCoinsLimit] = useState(10);
   const [testMode, setTestMode] = useState(true);
   const [operationMode, setOperationMode] = useState("websocket");
@@ -136,6 +146,37 @@ export const usePaperTrading = (
   const { marketSentiment, sentimentLoading, fetchMarketSentiment } =
     useMarketSentiment(addLog, isActive);
 
+  // 🎯 핵심 추가: coinStore와 favoriteCoins 동기화
+  useEffect(() => {
+    if (!isStoreInitialized) return;
+
+    console.log("🔍 storeSelectedCoins 상태 변화:", storeSelectedCoins);
+    console.log("🔍 현재 favoriteCoins 상태:", favoriteCoins);
+
+    // 배열 내용이 실제로 다른지 확인
+    const isSame =
+      favoriteCoins.length === storeSelectedCoins.length &&
+      favoriteCoins.every((fc) =>
+        storeSelectedCoins.find((sc) => sc.market === fc.market)
+      );
+
+    if (storeSelectedCoins.length > 0 && !isSame) {
+      console.log("🔄 coinStore → favoriteCoins 동기화 시작");
+      setFavoriteCoins(
+        storeSelectedCoins.map((coin) => ({
+          ...coin,
+          isTopCoin: false,
+        }))
+      );
+      addLog(`관심코인 동기화됨: ${storeSelectedCoins.length}개`, "info");
+    } else if (storeSelectedCoins.length === 0 && favoriteCoins.length > 0) {
+      // Store가 비었지만 local에는 있는 경우 local도 비우기
+      console.log("🔄 coinStore가 비어서 favoriteCoins도 초기화");
+      setFavoriteCoins([]);
+      addLog("관심코인 목록이 초기화됨", "info");
+    }
+  }, [storeSelectedCoins, favoriteCoins, isStoreInitialized, addLog]);
+
   // 🎯 핵심 수정: 모드별 코인 동기화 (덮어쓰기 방지)
   useEffect(() => {
     // 🔒 Store가 초기화되지 않았으면 동기화 안함
@@ -144,7 +185,6 @@ export const usePaperTrading = (
     // 🔒 관심코인 모드에서는 관심코인만 설정하고 조기 리턴
     if (tradingMode === "favorites") {
       setCurrentSelectedCoins(favoriteCoins);
-      setSelectedCoins(favoriteCoins);
       addLog(`🎯 관심코인 모드로 전환: ${favoriteCoins.length}개`, "info");
       return; // ✅ 조기 리턴으로 상위코인 처리 방지
     }
@@ -152,17 +192,9 @@ export const usePaperTrading = (
     // 🔒 상위코인 모드에서만 상위코인 설정
     if (tradingMode === "top") {
       setCurrentSelectedCoins(topCoins);
-      setSelectedCoins(topCoins);
       addLog(`🏆 상위코인 모드로 전환: ${topCoins.length}개`, "info");
     }
-  }, [
-    tradingMode,
-    favoriteCoins,
-    topCoins,
-    setSelectedCoins,
-    addLog,
-    isStoreInitialized,
-  ]);
+  }, [tradingMode, favoriteCoins, topCoins, addLog, isStoreInitialized]);
 
   // ✅ 투자 가능 코인 확인
   const isInvestableSymbol = useCallback((symbol) => {
@@ -174,7 +206,7 @@ export const usePaperTrading = (
     );
   }, []);
 
-  // 🎯 상위 코인 업데이트 (하드코딩 제거)
+  // ✅ 상위 코인 업데이트 함수 수정 (하이브리드 뉴스 캐시 연동)
   const updateTopCoinsUI = useCallback(async () => {
     if (tradingModeRef.current !== "top") {
       addLog("상위코인 모드가 아니므로 업데이트 건너뜀", "info");
@@ -183,10 +215,7 @@ export const usePaperTrading = (
 
     try {
       addLog("🔄 상위 코인 업데이트 시작", "info", "top_coins_update");
-
-      // ✅ 하드코딩 제거 - 항상 topCoinsLimit 사용
       const maxCoins = topCoinsLimit;
-
       const topCoinsData = await upbitMarketService.getTopCoins(
         maxCoins,
         testModeRef.current
@@ -208,57 +237,86 @@ export const usePaperTrading = (
           changePercent:
             coin.tickerData?.priceChangePercent || coin.change_percent || 0,
           rank: index + 1,
-          isTopCoin: true, // 🎯 상위코인 플래그
+          isTopCoin: true,
           lastUpdated: new Date(),
         }))
         .filter((coin) => coin.symbol && coin.market);
 
-      // 🎯 topCoins 상태만 업데이트 (favoriteCoins 보존)
       setTopCoins(formattedCoins);
+
+      // ✅ 하이브리드 뉴스 캐시 업데이트
+      try {
+        await hybridSignalGenerator.updateWatchedCoins(
+          favoriteCoins.map((c) => c.symbol),
+          formattedCoins.map((c) => c.symbol)
+        );
+        addLog("상위 코인 뉴스 캐시 업데이트 완료", "info");
+      } catch (newsError) {
+        addLog(`뉴스 캐시 업데이트 실패: ${newsError.message}`, "warning");
+      }
 
       addLog(
         `상위 코인 ${formattedCoins.length}개 업데이트 완료 (설정: ${maxCoins}개)`,
         "success",
         "top_coins_success"
       );
-
       return formattedCoins;
     } catch (error) {
       addLog(`상위 코인 업데이트 실패: ${error.message}`, "error");
       return [];
     }
-  }, [topCoinsLimit, addLog]); // ✅ testModeRef, tradingModeRef 의존성 제거
+  }, [topCoinsLimit, addLog, favoriteCoins]);
 
-  // 🎯 관심코인 추가/제거 함수
+  // 🎯 관심코인 추가/제거 함수 (coinStore와 양방향 동기화)
   const addFavoriteCoin = useCallback(
-    (coin) => {
-      setFavoriteCoins((prev) => {
-        if (prev.some((c) => c.market === coin.market)) {
-          addLog(`${coin.symbol}은 이미 관심코인입니다`, "warning");
-          return prev;
-        }
+    async (coin) => {
+      try {
+        // 1️⃣ coinStore에 추가
+        const result = addCoinToStore(coin.market);
 
-        const newCoin = { ...coin, isTopCoin: false };
-        const updated = [...prev, newCoin];
-        addLog(`${coin.symbol} 관심코인에 추가됨`, "success");
-        return updated;
-      });
+        if (result.success) {
+          addLog(`${coin.symbol} 관심코인에 추가됨`, "success");
+
+          // 2️⃣ 뉴스 캐시 업데이트
+          try {
+            const updatedFavorites = [
+              ...favoriteCoins,
+              { ...coin, isTopCoin: false },
+            ];
+            await hybridSignalGenerator.updateWatchedCoins(
+              updatedFavorites.map((c) => c.symbol),
+              topCoins.map((c) => c.symbol)
+            );
+            addLog(`${coin.symbol} 뉴스 분석 캐시 업데이트 시작`, "info");
+          } catch (error) {
+            addLog(`뉴스 캐시 업데이트 실패: ${error.message}`, "warning");
+          }
+        } else {
+          addLog(result.message, "warning");
+        }
+      } catch (error) {
+        addLog(`관심코인 추가 실패: ${error.message}`, "error");
+      }
     },
-    [addLog]
+    [addCoinToStore, addLog, favoriteCoins, topCoins]
   );
 
   const removeFavoriteCoin = useCallback(
     (market) => {
-      setFavoriteCoins((prev) => {
-        const updated = prev.filter((c) => c.market !== market);
-        const removed = prev.find((c) => c.market === market);
-        if (removed) {
-          addLog(`${removed.symbol} 관심코인에서 제거됨`, "info");
+      try {
+        // 1️⃣ coinStore에서 제거
+        const result = removeCoinFromStore(market);
+
+        if (result.success) {
+          addLog(result.message, "info");
+        } else {
+          addLog(result.message, "warning");
         }
-        return updated;
-      });
+      } catch (error) {
+        addLog(`관심코인 제거 실패: ${error.message}`, "error");
+      }
     },
-    [addLog]
+    [removeCoinFromStore, addLog]
   );
 
   // ✅ 타겟 마켓 가져오기 (현재 선택된 코인 기준)
@@ -277,7 +335,6 @@ export const usePaperTrading = (
         `${tradingModeRef.current === "favorites" ? "관심코인" : "상위코인"} 모드: ${markets.length}개 타겟`,
         "info"
       );
-
       return markets;
     } catch (error) {
       addLog(`❌ 타겟 마켓 가져오기 실패: ${error.message}`, "error");
@@ -511,6 +568,22 @@ export const usePaperTrading = (
     try {
       addLog("🚀 Store 초기화 시작 (명시적 호출)", "info");
       await initializeData(true); // ✅ 명시적으로 forceInit=true
+
+      // 🎯 초기화 후 즉시 관심코인 동기화
+      const currentSelectedCoins = useCoinStore.getState().selectedCoins;
+      if (currentSelectedCoins.length > 0) {
+        setFavoriteCoins(
+          currentSelectedCoins.map((coin) => ({
+            ...coin,
+            isTopCoin: false,
+          }))
+        );
+        addLog(
+          `초기화 시 관심코인 ${currentSelectedCoins.length}개 동기화`,
+          "success"
+        );
+      }
+
       setIsStoreInitialized(true);
       addLog("✅ Store 초기화 완료", "success");
     } catch (error) {
@@ -518,6 +591,33 @@ export const usePaperTrading = (
       throw error;
     }
   }, [isStoreInitialized, initializeData, addLog]);
+
+  // ✅ 컴포넌트 마운트 시 즉시 동기화
+  useEffect(() => {
+    const initializeOnMount = async () => {
+      // Store 초기화
+      if (!isStoreInitialized) {
+        await initializeStore();
+      }
+
+      // 기존 관심코인이 있다면 즉시 동기화
+      const currentStoreCoins = useCoinStore.getState().selectedCoins;
+      if (currentStoreCoins.length > 0) {
+        setFavoriteCoins(
+          currentStoreCoins.map((coin) => ({
+            ...coin,
+            isTopCoin: false,
+          }))
+        );
+        addLog(
+          `마운트 시 관심코인 ${currentStoreCoins.length}개 동기화`,
+          "info"
+        );
+      }
+    };
+
+    initializeOnMount();
+  }, []); // 빈 배열로 마운트 시에만 실행
 
   // ✅ 페이퍼 트레이딩 시작
   const startPaperTrading = useCallback(async () => {
@@ -548,8 +648,22 @@ export const usePaperTrading = (
       signalGenerator.setTestMode?.(testModeRef.current);
       upbitWebSocketService.setTestMode(testModeRef.current);
 
+      // ✅ 하이브리드 뉴스 캐시 초기화
+      try {
+        const watchlistSymbols = favoriteCoins.map((c) => c.symbol);
+        const topCoinsSymbols = topCoins.map((c) => c.symbol);
+
+        await hybridSignalGenerator.updateWatchedCoins(
+          watchlistSymbols,
+          topCoinsSymbols
+        );
+        addLog("하이브리드 뉴스 분석 시스템 초기화 완료", "success");
+      } catch (newsError) {
+        addLog(`뉴스 시스템 초기화 실패: ${newsError.message}`, "warning");
+      }
+
       addLog(
-        `${testModeRef.current ? "테스트" : "실전"} 페이퍼 트레이딩 시작`,
+        `${testModeRef.current ? "테스트" : "실전"} 페이퍼 트레이딩 시작 (하이브리드 뉴스 분석 포함)`,
         "success"
       );
 
@@ -559,9 +673,9 @@ export const usePaperTrading = (
 
       if (operationMode === "websocket" && isActiveRef.current) {
         addLog("실시간 연결 설정 중", "info", "websocket_setup");
-
         try {
           const targetMarkets = await getTargetMarkets();
+
           if (targetMarkets.length > 0) {
             subscriptionIdRef.current = upbitWebSocketService.subscribe(
               `papertrading_${Date.now()}`,
@@ -616,27 +730,29 @@ export const usePaperTrading = (
             }
           }, 300000);
         }
-      }
 
-      const modeText = testModeRef.current
-        ? "테스트 모드: 완화된 조건으로 더 많은 거래 기회"
-        : "실전 모드: 엄격한 조건으로 신중한 거래";
+        const modeText = testModeRef.current
+          ? "테스트 모드: 완화된 조건으로 더 많은 거래 기회"
+          : "실전 모드: 엄격한 조건으로 신중한 거래";
 
-      addLog(modeText, "info", "trading_mode_info");
+        addLog(modeText, "info", "trading_mode_info");
+        addLog(
+          `거래 대상: ${
+            tradingMode === "top"
+              ? `상위 ${topCoinsLimit}개 코인`
+              : `관심 코인 ${favoriteCoins.length}개`
+          }`,
+          "info",
+          "trading_targets"
+        );
 
-      addLog(
-        `거래 대상: ${
-          tradingMode === "top"
-            ? `상위 ${topCoinsLimit}개 코인`
-            : `관심 코인 ${favoriteCoins.length}개`
-        }`,
-        "info",
-        "trading_targets"
-      );
-
-      const logStatus = getLogSystemStatus();
-      if (!logStatus.isHealthy) {
-        addLog(`로그 시스템 과부하: ${logStatus.logsPerSecond}/초`, "warning");
+        const logStatus = getLogSystemStatus();
+        if (!logStatus.isHealthy) {
+          addLog(
+            `로그 시스템 과부하: ${logStatus.logsPerSecond}/초`,
+            "warning"
+          );
+        }
       }
     } catch (error) {
       addLog(`시작 실패: ${error.message}`, "error");
@@ -698,6 +814,7 @@ export const usePaperTrading = (
       const modeText = newTestMode
         ? "테스트 모드 활성화: 완화된 조건, 더 많은 거래 기회"
         : "실전 모드 활성화: 엄격한 조건, 신중한 거래";
+
       addLog(modeText, "info");
       return newTestMode;
     });
@@ -714,6 +831,25 @@ export const usePaperTrading = (
       updateTopCoinsUI();
     }
   }, [tradingMode, topCoins.length, updateTopCoinsUI, isStoreInitialized]);
+
+  // ✅ 개발 모드에서 상태 모니터링
+  useEffect(() => {
+    if (process.env.NODE_ENV === "development") {
+      console.log("🔍 usePaperTrading 상태 동기화:", {
+        storeSelectedCoins: storeSelectedCoins.length,
+        favoriteCoins: favoriteCoins.length,
+        currentSelectedCoins: currentSelectedCoins.length,
+        tradingMode,
+        isStoreInitialized,
+      });
+    }
+  }, [
+    storeSelectedCoins.length,
+    favoriteCoins.length,
+    currentSelectedCoins.length,
+    tradingMode,
+    isStoreInitialized,
+  ]);
 
   // ✅ Cleanup (컴포넌트 언마운트 시)
   useEffect(() => {

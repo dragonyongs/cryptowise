@@ -12,25 +12,41 @@
             "destination": "/index.html"
         }
     ],
+    "functions": {
+        "api/news-analysis.js": {
+            "maxDuration": 10,
+            "memory": 512
+        },
+        "api/news-background-update.js": {
+            "maxDuration": 30,
+            "memory": 1024
+        }
+    },
+    "crons": [
+        {
+            "path": "/api/news-background-update",
+            "schedule": "*/10 * * * *"
+        }
+    ],
     "headers": [
         {
             "source": "/api/(.*)",
             "headers": [
+                {
+                    "key": "Access-Control-Allow-Credentials",
+                    "value": "true"
+                },
                 {
                     "key": "Access-Control-Allow-Origin",
                     "value": "*"
                 },
                 {
                     "key": "Access-Control-Allow-Methods",
-                    "value": "GET, OPTIONS"
+                    "value": "GET,OPTIONS"
                 },
                 {
                     "key": "Access-Control-Allow-Headers",
                     "value": "Content-Type"
-                },
-                {
-                    "key": "Cache-Control",
-                    "value": "public, max-age=300"
                 }
             ]
         }

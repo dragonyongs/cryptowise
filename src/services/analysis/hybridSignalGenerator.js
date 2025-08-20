@@ -1,15 +1,72 @@
-// src/services/analysis/hybridSignalGenerator.js
+// src/services/analysis/hybridSignalGenerator.js (기존 파일 수정)
 import fundamentalAnalysisService from "./fundamentalAnalysis.js";
 import marketCorrelationService from "./marketCorrelation.js";
 import sentimentAnalysisService from "../market/sentimentAnalysis.js";
+import { hybridAnalyzer } from "./hybridAnalyzer.js"; // ✅ 추가
 
 class HybridSignalGenerator {
   constructor() {
     this.signalHistory = [];
     this.maxHistoryLength = 100;
+    this.analyzer = hybridAnalyzer; // ✅ 하이브리드 분석기 연결
+    this.fallbackMode = true; // ✅ 기존 방식 백업
   }
 
+  // ✅ 새로운 하이브리드 분석 우선, 실패시 기존 방식
   async generateEnhancedSignal(marketData) {
+    const symbol = marketData.code.replace("KRW-", "");
+
+    try {
+      // 🎯 우선 하이브리드 분석 시도
+      const hybridSignal = await this.analyzer.quickAnalyzeCoin(
+        symbol,
+        marketData
+      );
+
+      if (hybridSignal && hybridSignal.totalScore > 0) {
+        // 하이브리드 분석 성공 - 기존 형식으로 변환
+        const enhancedSignal = {
+          symbol,
+          totalScore: hybridSignal.totalScore,
+          confidence: hybridSignal.confidence,
+          action: hybridSignal.action,
+          breakdown: {
+            technical: hybridSignal.technical || 5,
+            fundamental: 5, // 기본값
+            correlation: 1.0,
+            sentiment: hybridSignal.newsScore
+              ? hybridSignal.newsScore / 5
+              : 1.0,
+            social: 5,
+            onchain: 5,
+          },
+          reason: hybridSignal.reason,
+          timestamp: Date.now(),
+          marketContext: {
+            btcDominance: 50,
+            marketPhase: "transition",
+            fearGreed: 50,
+            altSeasonProb: 0.5,
+          },
+          isHybridAnalysis: true, // ✅ 하이브리드 분석 플래그
+        };
+
+        this.addToHistory(enhancedSignal);
+        return enhancedSignal;
+      }
+    } catch (error) {
+      console.warn(
+        `하이브리드 분석 실패 (${symbol}), 기존 방식 사용:`,
+        error.message
+      );
+    }
+
+    // 🔄 기존 분석 방식 (백업)
+    return await this.generateLegacySignal(marketData);
+  }
+
+  // ✅ 기존 분석 방식 (수정 없음, 백업용)
+  async generateLegacySignal(marketData) {
     const symbol = marketData.code.replace("KRW-", "");
 
     try {
@@ -76,18 +133,29 @@ class HybridSignalGenerator {
           fearGreed: sentimentScore.fearGreedIndex,
           altSeasonProb: correlationScore.altSeasonProbability,
         },
+        isHybridAnalysis: false, // ✅ 기존 분석 플래그
       };
 
       // 신호 히스토리 저장
       this.addToHistory(signal);
-
       return signal;
     } catch (error) {
-      console.error("Enhanced signal generation failed:", error);
+      console.error("Legacy signal generation failed:", error);
       return this.getDefaultSignal(symbol);
     }
   }
 
+  // ✅ 관심코인 업데이트 함수 추가
+  async updateWatchedCoins(watchlist, topCoins) {
+    try {
+      return await this.analyzer.updateWatchedCoins(watchlist, topCoins);
+    } catch (error) {
+      console.warn("관심코인 업데이트 실패:", error);
+      return { updated: 0, total: 0, newCoins: [] };
+    }
+  }
+
+  // 기존 메서드들 유지 (수정 없음)
   calculateWeightedScore(scores) {
     const weights = {
       technical: 0.4, // 40% - 기술적 분석
@@ -113,7 +181,6 @@ class HybridSignalGenerator {
     try {
       const price = parseFloat(marketData.trade_price);
       const volume = parseFloat(marketData.candle_acc_trade_volume);
-
       // 간단한 기술적 분석 (실제로는 더 복잡한 지표 계산)
       let score = 5; // 기본 점수
 
@@ -184,11 +251,11 @@ class HybridSignalGenerator {
     }
 
     // 감정 지수에 따른 조정
-    if (sentimentScore.contrarian.buySignal && totalScore >= 5.5) {
+    if (sentimentScore.contrarian?.buySignal && totalScore >= 5.5) {
       action = action === "HOLD" ? "BUY" : action;
     }
 
-    if (sentimentScore.contrarian.sellSignal && totalScore <= 4.5) {
+    if (sentimentScore.contrarian?.sellSignal && totalScore <= 4.5) {
       action = action === "HOLD" ? "SELL" : action;
     }
 
@@ -275,6 +342,7 @@ class HybridSignalGenerator {
         fearGreed: 50,
         altSeasonProb: 0.5,
       },
+      isHybridAnalysis: false,
     };
   }
 }
