@@ -241,12 +241,12 @@ export default function CoinAnalysis() {
       setLoading(true);
       setError(null);
 
-      const res = await fetch(
-        `https://api.upbit.com/v1/candles/days?market=${market}&count=100`
-      );
+      // ✅ 직접 업비트 API 대신 프록시 사용
+      const proxyUrl = `/api/upbit-proxy?market=${market}&count=100&endpoint=candles/days`;
+      const res = await fetch(proxyUrl);
 
       if (!res.ok) {
-        throw new Error(`API 호출 실패: ${res.status}`);
+        throw new Error(`프록시 API 호출 실패: ${res.status}`);
       }
 
       const data = await res.json();
@@ -529,8 +529,8 @@ export default function CoinAnalysis() {
                       key={coin.market}
                       onClick={() => setSelectedCoin(coin.market)}
                       className={`p-4 rounded-lg border cursor-pointer transition-all ${isSelected
-                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                          : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
                         }`}
                     >
                       <div className="flex items-center justify-between">

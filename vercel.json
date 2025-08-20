@@ -13,13 +13,14 @@
         }
     ],
     "functions": {
+        "api/upbit-proxy.js": {
+            "maxDuration": 10
+        },
         "api/news-analysis.js": {
-            "maxDuration": 10,
-            "memory": 512
+            "maxDuration": 10
         },
         "api/news-background-update.js": {
-            "maxDuration": 30,
-            "memory": 1024
+            "maxDuration": 30
         }
     },
     "crons": [
