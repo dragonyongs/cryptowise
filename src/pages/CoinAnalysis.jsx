@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { useCoinStore } from "../stores/coinStore";
 import TechnicalIndicatorsPanel from "../components/features/analysis/TechnicalIndicatorsPanel";
 import { newsService } from "../services/news/newsService";
+import { hybridAnalyzer } from "../services/analysis/hybridAnalyzer";
 import {
   ArrowLeftIcon,
   ChartBarIcon,
@@ -52,7 +53,12 @@ export default function CoinAnalysis() {
   const [volumes, setVolumes] = useState([]);
   const [candleData, setCandleData] = useState([]);
 
-  // 안전한 뉴스 데이터 상태 관리
+  // 🎯 개선된 분석 상태 관리
+  const [analysisResults, setAnalysisResults] = useState({});
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState(null);
+
+  // 안전한 뉴스 데이터 상태 관리 (개별 코인용)
   const [newsData, setNewsData] = useState({
     score: 5.0,
     sentiment: "neutral",
@@ -68,19 +74,97 @@ export default function CoinAnalysis() {
   // 코인 데이터 초기화
   useEffect(() => {
     if (availableCoins.length === 0) {
-      initializeData(true); // 🎯 명시적으로 forceInit=true 전달
+      initializeData(true);
     }
   }, [availableCoins.length, initializeData]);
 
-  // 안전한 뉴스 데이터 fetch 함수
+  // 🎯 핵심: 하이브리드 분석 실행 (기술적 지표 즉시 표시)
+  const performHybridAnalysis = async (coins) => {
+    if (!coins || coins.length === 0) return;
+
+    try {
+      setAnalysisLoading(true);
+      setAnalysisError(null);
+
+      console.log('🚀 하이브리드 분석 시작:', coins.map(c => c.symbol));
+
+      await hybridAnalyzer.analyzeCoins(coins, (update) => {
+        console.log('📊 분석 업데이트:', update);
+
+        switch (update.type) {
+          case 'technical_ready':
+            // ✅ 기술적 지표 즉시 표시
+            setAnalysisResults(prev => ({
+              ...prev,
+              ...update.results
+            }));
+            console.log('✅ 기술적 분석 완료');
+            break;
+
+          case 'news_cache_ready':
+            // ✅ 캐시된 뉴스 포함 업데이트
+            setAnalysisResults(prev => ({
+              ...prev,
+              ...update.results
+            }));
+            console.log(`📰 캐시된 뉴스: ${update.cached}개, 로딩 중: ${update.loading}개`);
+            break;
+
+          case 'news_loading_progress':
+            // ✅ 뉴스 로딩 진행 중 업데이트
+            setAnalysisResults(prev => ({
+              ...prev,
+              ...update.results
+            }));
+            break;
+
+          case 'analysis_complete':
+            // ✅ 모든 분석 완료
+            setAnalysisResults(prev => ({
+              ...prev,
+              ...update.results
+            }));
+            setAnalysisLoading(false);
+            console.log('🎉 모든 분석 완료');
+            break;
+
+          case 'analysis_error':
+            console.error('❌ 분석 오류:', update.error);
+            setAnalysisError(update.error);
+            setAnalysisResults(prev => ({
+              ...prev,
+              ...update.results
+            }));
+            setAnalysisLoading(false);
+            break;
+        }
+      });
+
+    } catch (error) {
+      console.error('하이브리드 분석 실패:', error);
+      setAnalysisError(error.message);
+      setAnalysisLoading(false);
+    }
+  };
+
+  // 선택된 코인들에 대한 하이브리드 분석 실행
+  useEffect(() => {
+    if (selectedCoins.length > 0) {
+      performHybridAnalysis(selectedCoins);
+    }
+  }, [selectedCoins]);
+
+  // 안전한 뉴스 데이터 fetch 함수 (개별 코인용)
   const fetchNewsData = async (symbol) => {
     if (!symbol) return;
+
     try {
       setNewsLoading(true);
       const coinSymbol = symbol.replace("KRW-", "");
-      console.log(`🔄 ${coinSymbol} 뉴스 데이터 요청`);
+      console.log(`🔄 ${coinSymbol} 개별 뉴스 데이터 요청`);
+
       const newsAnalysis = await newsService.getNewsScore(coinSymbol);
-      console.log("📊 뉴스 분석 결과:", newsAnalysis);
+      console.log("📊 개별 뉴스 분석 결과:", newsAnalysis);
 
       setNewsData({
         score: newsAnalysis?.score || 5.0,
@@ -95,7 +179,7 @@ export default function CoinAnalysis() {
         loading: false,
       });
     } catch (error) {
-      console.error("뉴스 데이터 로드 실패:", error);
+      console.error("개별 뉴스 데이터 로드 실패:", error);
       setNewsData({
         score: 5.0,
         sentiment: "neutral",
@@ -134,6 +218,16 @@ export default function CoinAnalysis() {
     return "text-gray-600";
   };
 
+  // 🎯 분석 점수 색상 함수
+  const getScoreColor = (score) => {
+    if (score >= 8) return "text-green-600 font-bold";
+    if (score >= 7) return "text-green-500";
+    if (score >= 6) return "text-blue-600";
+    if (score <= 3) return "text-red-600 font-bold";
+    if (score <= 4) return "text-red-500";
+    return "text-gray-600";
+  };
+
   // 선택된 코인이 없으면 첫 번째 자동 선택
   useEffect(() => {
     if (selectedCoins.length > 0 && !selectedCoin) {
@@ -146,12 +240,15 @@ export default function CoinAnalysis() {
     try {
       setLoading(true);
       setError(null);
+
       const res = await fetch(
         `https://api.upbit.com/v1/candles/days?market=${market}&count=100`
       );
+
       if (!res.ok) {
         throw new Error(`API 호출 실패: ${res.status}`);
       }
+
       const data = await res.json();
       if (!data || data.length === 0) {
         throw new Error("데이터가 없습니다");
@@ -206,6 +303,10 @@ export default function CoinAnalysis() {
       fetchPriceData(selectedCoin);
       fetchNewsData(selectedCoin);
     }
+    // 하이브리드 분석도 새로고침
+    if (selectedCoins.length > 0) {
+      performHybridAnalysis(selectedCoins);
+    }
   };
 
   // 코인 추가 핸들러
@@ -223,7 +324,6 @@ export default function CoinAnalysis() {
   const handleRemoveCoin = (market) => {
     const result = removeCoin(market);
     if (result.success) {
-      // 제거된 코인이 현재 선택된 코인이면 첫 번째 코인으로 변경
       if (selectedCoin === market && selectedCoins.length > 1) {
         const remainingCoins = selectedCoins.filter(c => c.market !== market);
         if (remainingCoins.length > 0) {
@@ -236,7 +336,6 @@ export default function CoinAnalysis() {
   // 검색된 코인 필터링
   const getSearchedCoins = () => {
     if (!searchQuery) return getFilteredCoins();
-
     return getFilteredCoins().filter(coin =>
       coin.korean_name.includes(searchQuery) ||
       coin.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -257,323 +356,496 @@ export default function CoinAnalysis() {
   // 선택된 코인이 없을 때 UI
   if (selectedCoins.length === 0) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <div className="container mx-auto px-4 py-8">
-          <div className="flex items-center justify-between mb-8">
-            <button
-              onClick={() => navigate(-1)}
-              className="flex items-center text-gray-600 hover:text-gray-900"
-            >
-              <ArrowLeftIcon className="w-5 h-5 mr-2" />
-              뒤로가기
-            </button>
-            <h1 className="text-2xl font-bold text-gray-900">코인 분석</h1>
-            <div></div>
-          </div>
-
-          <div className="max-w-2xl mx-auto text-center">
-            <div className="bg-white rounded-lg shadow-sm p-8">
-              <ChartBarIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-              <h2 className="text-xl font-semibold text-gray-900 mb-2">
-                관심 코인을 추가해주세요
-              </h2>
-              <p className="text-gray-600 mb-6">
-                관심 코인을 추가하면 AI 기반 분석을 시작할 수 있습니다
-              </p>
-
-              {/* 플랜 정보 */}
-              <div className="mb-6">
-                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getPlanBadgeColor(userPlan)}`}>
-                  {userPlan.toUpperCase()} 플랜: 최대 {maxCoins}개 코인
-                </span>
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+        {/* 헤더 */}
+        <div className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex items-center justify-between h-16">
+              <div className="flex items-center space-x-4">
+                <button
+                  onClick={() => navigate(-1)}
+                  className="flex items-center text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+                >
+                  <ArrowLeftIcon className="h-5 w-5 mr-2" />
+                  뒤로가기
+                </button>
+                <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
+                  코인 분석
+                </h1>
               </div>
 
-              <button
-                onClick={() => setShowCoinSelector(true)}
-                className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                <PlusIcon className="w-5 h-5 mr-2" />
-                코인 추가하기
-              </button>
+              {/* 플랜 정보 */}
+              <div className="flex items-center space-x-4">
+                <span className={`px-3 py-1 rounded-full text-xs font-medium ${getPlanBadgeColor(userPlan)}`}>
+                  {userPlan.toUpperCase()}
+                </span>
+                <span className="text-sm text-gray-500 dark:text-gray-400">
+                  {selectedCoins.length}/{maxCoins}개
+                </span>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* 코인 선택 모달 */}
-        {showCoinSelector && (
-          <CoinSelectorModal
-            isOpen={showCoinSelector}
-            onClose={() => {
-              setShowCoinSelector(false);
-              setSearchQuery("");
-            }}
-            searchQuery={searchQuery}
-            setSearchQuery={setSearchQuery}
-            availableCoins={getSearchedCoins()}
-            selectedCoins={selectedCoins}
-            onAddCoin={handleAddCoin}
-            maxCoins={maxCoins}
-            remainingSlots={getRemainingSlots()}
-            isLoading={isLoading}
-          />
-        )}
-      </div>
-    );
-  }
+        {/* 빈 상태 */}
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+          <div className="text-center">
+            <div className="mx-auto h-24 w-24 text-gray-400 dark:text-gray-500 mb-6">
+              <ChartBarIcon />
+            </div>
+            <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-4">
+              분석할 코인을 선택해주세요
+            </h2>
+            <p className="text-gray-600 dark:text-gray-400 mb-8">
+              관심 코인을 추가하면 AI 기반 분석을 시작할 수 있습니다
+            </p>
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="container mx-auto px-4 py-8">
-        {/* 헤더 */}
-        <div className="flex items-center justify-between mb-8">
-          <button
-            onClick={() => navigate(-1)}
-            className="flex items-center text-gray-600 hover:text-gray-900"
-          >
-            <ArrowLeftIcon className="w-5 h-5 mr-2" />
-            뒤로가기
-          </button>
-          <h1 className="text-2xl font-bold text-gray-900">코인 분석</h1>
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={handleRefresh}
-              className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
-              title="새로고침"
-            >
-              <ArrowPathIcon className="w-5 h-5" />
-            </button>
             <button
               onClick={() => setShowCoinSelector(true)}
-              className="flex items-center px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+              className="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
-              <PlusIcon className="w-4 h-4 mr-1" />
+              <PlusIcon className="h-5 w-5 mr-2" />
               코인 추가
             </button>
           </div>
         </div>
 
-        {/* 관심 코인 선택 섹션 */}
-        <div className="bg-white rounded-lg shadow-sm p-6 mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">관심 코인 선택</h2>
-            <div className="flex items-center space-x-2">
-              <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${getPlanBadgeColor(userPlan)}`}>
+        {/* 코인 선택 모달 */}
+        {showCoinSelector && (
+          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-96 overflow-hidden">
+              <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                <h3 className="text-lg font-semibold">코인 선택</h3>
+                <button
+                  onClick={() => setShowCoinSelector(false)}
+                  className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                >
+                  <XMarkIcon className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="p-4">
+                <div className="relative mb-4">
+                  <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-3 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="코인 검색..."
+                    className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                </div>
+
+                <div className="max-h-64 overflow-y-auto">
+                  {getSearchedCoins().map((coin) => (
+                    <div
+                      key={coin.market}
+                      className="flex items-center justify-between p-3 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg cursor-pointer"
+                      onClick={() => handleAddCoin(coin.market)}
+                    >
+                      <div>
+                        <div className="font-medium text-gray-900 dark:text-white">
+                          {coin.korean_name}
+                        </div>
+                        <div className="text-sm text-gray-500 dark:text-gray-400">
+                          {coin.symbol}
+                        </div>
+                      </div>
+                      <PlusIcon className="h-5 w-5 text-blue-600" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // 메인 분석 UI
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      {/* 헤더 */}
+      <div className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={() => navigate(-1)}
+                className="flex items-center text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+              >
+                <ArrowLeftIcon className="h-5 w-5 mr-2" />
+                뒤로가기
+              </button>
+              <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
+                코인 분석
+              </h1>
+            </div>
+
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={handleRefresh}
+                className="p-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+              >
+                <ArrowPathIcon className="h-5 w-5" />
+              </button>
+              <span className={`px-3 py-1 rounded-full text-xs font-medium ${getPlanBadgeColor(userPlan)}`}>
                 {userPlan.toUpperCase()}
               </span>
-              <span className="text-sm text-gray-600">
+              <span className="text-sm text-gray-500 dark:text-gray-400">
                 {selectedCoins.length}/{maxCoins}개
               </span>
             </div>
           </div>
+        </div>
+      </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            {selectedCoins.map((coin) => (
-              <div
-                key={coin.market}
-                className={`relative group cursor-pointer p-3 border-2 rounded-lg transition-all ${selectedCoin === coin.market
-                  ? "border-blue-500 bg-blue-50"
-                  : "border-gray-200 hover:border-gray-300"
-                  }`}
-                onClick={() => setSelectedCoin(coin.market)}
-              >
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+          {/* 사이드바 - 코인 목록 */}
+          <div className="lg:col-span-1">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  관심 코인
+                </h2>
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleRemoveCoin(coin.market);
-                  }}
-                  className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-                  title="제거"
+                  onClick={() => setShowCoinSelector(true)}
+                  className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
                 >
-                  <XMarkIcon className="w-4 h-4" />
+                  <PlusIcon className="h-4 w-4" />
                 </button>
+              </div>
 
-                <div className="text-center">
-                  <div className="font-medium text-gray-900 text-sm">
-                    {coin.korean_name}
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    {coin.symbol}
-                  </div>
-                  <div className={`text-xs mt-1 ${coin.change_rate >= 0 ? "text-red-600" : "text-blue-600"
-                    }`}>
-                    {coin.change_rate >= 0 ? "+" : ""}{coin.change_rate?.toFixed(2)}%
+              {/* 🎯 하이브리드 분석 결과 표시 */}
+              <div className="space-y-3">
+                {selectedCoins.map((coin) => {
+                  const analysis = analysisResults[coin.symbol];
+                  const isSelected = selectedCoin === coin.market;
+
+                  return (
+                    <div
+                      key={coin.market}
+                      onClick={() => setSelectedCoin(coin.market)}
+                      className={`p-4 rounded-lg border cursor-pointer transition-all ${isSelected
+                          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                          : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                        }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between mb-2">
+                            <h3 className="font-medium text-gray-900 dark:text-white text-sm">
+                              {coin.korean_name}
+                            </h3>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemoveCoin(coin.market);
+                              }}
+                              className="text-gray-400 hover:text-red-600 transition-colors"
+                            >
+                              <XMarkIcon className="h-4 w-4" />
+                            </button>
+                          </div>
+
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            {coin.symbol}
+                          </div>
+
+                          {/* ✅ 분석 결과 표시 */}
+                          {analysis ? (
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-gray-500">기술적:</span>
+                                <span className={getScoreColor(analysis.technical)}>
+                                  {analysis.technical}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-gray-500">뉴스:</span>
+                                {analysis.news.status === 'loading' ? (
+                                  <span className="text-yellow-600">로딩중...</span>
+                                ) : analysis.news.status === 'failed' ? (
+                                  <span className="text-red-500">실패</span>
+                                ) : (
+                                  <span className={getScoreColor(analysis.news.score)}>
+                                    {analysis.news.score}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex items-center justify-between text-xs font-medium">
+                                <span className="text-gray-700 dark:text-gray-300">종합:</span>
+                                <span className={getScoreColor(analysis.combined)}>
+                                  {analysis.combined}/10
+                                </span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-xs text-gray-400">
+                              {analysisLoading ? '분석 중...' : '분석 대기'}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {analysisError && (
+                <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                  <div className="flex">
+                    <ExclamationTriangleIcon className="h-5 w-5 text-red-400 mr-2 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm text-red-800 dark:text-red-200">
+                      {analysisError}
+                    </div>
                   </div>
                 </div>
+              )}
+            </div>
+          </div>
+
+          {/* 메인 콘텐츠 */}
+          <div className="lg:col-span-3">
+            {error ? (
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-8">
+                <div className="text-center">
+                  <ExclamationTriangleIcon className="h-12 w-12 text-red-500 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                    데이터 로드 실패
+                  </h3>
+                  <p className="text-gray-600 dark:text-gray-400 mb-4">
+                    {selectedCoins.find(c => c.market === selectedCoin)?.korean_name || selectedCoin}의 데이터를 불러올 수 없습니다
+                  </p>
+                  <p className="text-sm text-gray-500 dark:text-gray-500 mb-6">
+                    오류: {error}
+                  </p>
+                  <button
+                    onClick={handleRefresh}
+                    className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    <ArrowPathIcon className="h-4 w-4 mr-2" />
+                    다시 시도
+                  </button>
+                </div>
               </div>
-            ))}
+            ) : (
+              <div className="space-y-6">
+                {/* 기술적 지표 패널 */}
+                {analysisData && closes.length > 0 && (
+                  <TechnicalIndicatorsPanel
+                    closes={closes}
+                    volumes={volumes}
+                    candleData={candleData}
+                    coinData={analysisData}
+                    loading={loading}
+                  />
+                )}
+
+                {/* 뉴스 분석 섹션 */}
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center">
+                      <NewspaperIcon className="h-6 w-6 text-gray-400 mr-3" />
+                      <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                        뉴스 분석
+                      </h2>
+                    </div>
+
+                    {newsLoading && (
+                      <div className="flex items-center text-sm text-gray-500">
+                        <ClockIcon className="h-4 w-4 mr-1 animate-pulse" />
+                        로딩 중...
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                          뉴스 점수
+                        </span>
+                        <span className={`text-lg font-bold ${getNewsScoreColor(newsData.score)}`}>
+                          {newsData.score}/10
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                          감정 분석
+                        </span>
+                        <div className="flex items-center">
+                          <span className="mr-2">{getNewsIcon(newsData.strength)}</span>
+                          <span className="text-sm text-gray-600 dark:text-gray-400 capitalize">
+                            {newsData.sentiment}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                          기사 수
+                        </span>
+                        <span className="text-sm text-gray-600 dark:text-gray-400">
+                          {newsData.articlesCount}개
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        최근 뉴스
+                      </h4>
+
+                      {newsData.articles.length > 0 ? (
+                        <div className="space-y-2">
+                          {newsData.articles.slice(0, 3).map((article, index) => (
+                            <div
+                              key={index}
+                              className="text-xs text-gray-600 dark:text-gray-400 line-clamp-2"
+                            >
+                              • {article.title}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-gray-500 dark:text-gray-400">
+                          {newsLoading ? "뉴스를 불러오는 중..." : "최근 뉴스가 없습니다"}
+                        </div>
+                      )}
+
+                      {newsData.error && (
+                        <div className="text-xs text-red-500">
+                          오류: {newsData.error}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 종합 분석 결과 */}
+                {analysisResults[selectedCoins.find(c => c.market === selectedCoin)?.symbol] && (
+                  <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+                    <div className="flex items-center mb-6">
+                      <BoltIcon className="h-6 w-6 text-yellow-500 mr-3" />
+                      <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                        종합 분석
+                      </h2>
+                    </div>
+
+                    {(() => {
+                      const analysis = analysisResults[selectedCoins.find(c => c.market === selectedCoin)?.symbol];
+
+                      return (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          <div className="text-center p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                            <div className="text-2xl font-bold mb-2">
+                              <span className={getScoreColor(analysis.technical)}>
+                                {analysis.technical}
+                              </span>
+                              <span className="text-gray-400 text-lg">/10</span>
+                            </div>
+                            <div className="text-sm text-gray-600 dark:text-gray-400">
+                              기술적 분석
+                            </div>
+                          </div>
+
+                          <div className="text-center p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                            <div className="text-2xl font-bold mb-2">
+                              {analysis.news.status === 'loading' ? (
+                                <span className="text-yellow-600">로딩중</span>
+                              ) : analysis.news.status === 'failed' ? (
+                                <span className="text-red-500">실패</span>
+                              ) : (
+                                <>
+                                  <span className={getScoreColor(analysis.news.score)}>
+                                    {analysis.news.score}
+                                  </span>
+                                  <span className="text-gray-400 text-lg">/10</span>
+                                </>
+                              )}
+                            </div>
+                            <div className="text-sm text-gray-600 dark:text-gray-400">
+                              뉴스 분석
+                            </div>
+                          </div>
+
+                          <div className="text-center p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                            <div className="text-3xl font-bold mb-2">
+                              <span className={getScoreColor(analysis.combined)}>
+                                {analysis.combined}
+                              </span>
+                              <span className="text-gray-400 text-lg">/10</span>
+                            </div>
+                            <div className="text-sm text-blue-600 dark:text-blue-400 font-medium">
+                              종합 점수
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
-
-        {/* 로딩 상태 */}
-        {loading && (
-          <div className="bg-white rounded-lg shadow-sm p-8 mb-8">
-            <div className="flex items-center justify-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-              <span className="ml-3 text-gray-600">
-                {selectedCoins.find(c => c.market === selectedCoin)?.korean_name || selectedCoin}의 기술적 지표를 분석하고 있습니다
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* 에러 상태 */}
-        {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-8">
-            <div className="flex items-center">
-              <ExclamationTriangleIcon className="w-5 h-5 text-red-600 mr-2" />
-              <span className="text-red-800 font-medium">{error}</span>
-            </div>
-            <p className="text-red-700 text-sm mt-1">
-              {selectedCoins.find(c => c.market === selectedCoin)?.korean_name || selectedCoin}의 데이터를 불러올 수 없습니다
-            </p>
-          </div>
-        )}
-
-        {/* 기술적 지표 패널 */}
-        {selectedCoin && !loading && !error && (
-          <TechnicalIndicatorsPanel
-            selectedCoin={selectedCoin}
-            analysisData={analysisData}
-            closes={closes}
-            volumes={volumes}
-            candleData={candleData}
-            newsData={newsData}
-            newsLoading={newsLoading}
-            getNewsIcon={getNewsIcon}
-            getNewsScoreColor={getNewsScoreColor}
-          />
-        )}
       </div>
 
       {/* 코인 선택 모달 */}
       {showCoinSelector && (
-        <CoinSelectorModal
-          isOpen={showCoinSelector}
-          onClose={() => {
-            setShowCoinSelector(false);
-            setSearchQuery("");
-          }}
-          searchQuery={searchQuery}
-          setSearchQuery={setSearchQuery}
-          availableCoins={getSearchedCoins()}
-          selectedCoins={selectedCoins}
-          onAddCoin={handleAddCoin}
-          maxCoins={maxCoins}
-          remainingSlots={getRemainingSlots()}
-          isLoading={isLoading}
-        />
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-96 overflow-hidden">
+            <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+              <h3 className="text-lg font-semibold">코인 선택</h3>
+              <button
+                onClick={() => setShowCoinSelector(false)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-4">
+              <div className="relative mb-4">
+                <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-3 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="코인 검색..."
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+
+              <div className="max-h-64 overflow-y-auto">
+                {getSearchedCoins().map((coin) => (
+                  <div
+                    key={coin.market}
+                    className="flex items-center justify-between p-3 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg cursor-pointer"
+                    onClick={() => handleAddCoin(coin.market)}
+                  >
+                    <div>
+                      <div className="font-medium text-gray-900 dark:text-white">
+                        {coin.korean_name}
+                      </div>
+                      <div className="text-sm text-gray-500 dark:text-gray-400">
+                        {coin.symbol}
+                      </div>
+                    </div>
+                    <PlusIcon className="h-5 w-5 text-blue-600" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
 }
-
-// 코인 선택 모달 컴포넌트
-const CoinSelectorModal = ({
-  isOpen,
-  onClose,
-  searchQuery,
-  setSearchQuery,
-  availableCoins,
-  selectedCoins,
-  onAddCoin,
-  maxCoins,
-  remainingSlots,
-  isLoading,
-}) => {
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[80vh] flex flex-col">
-        {/* 모달 헤더 */}
-        <div className="flex items-center justify-between p-6 border-b">
-          <h2 className="text-xl font-semibold text-gray-900">코인 추가</h2>
-          <div className="flex items-center space-x-4">
-            <span className="text-sm text-gray-600">
-              남은 슬롯: {remainingSlots}개 / {maxCoins}개
-            </span>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600"
-            >
-              <XMarkIcon className="w-6 h-6" />
-            </button>
-          </div>
-        </div>
-
-        {/* 검색 섹션 */}
-        <div className="p-6 border-b">
-          <div className="relative">
-            <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="코인명 또는 심볼 검색..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-        </div>
-
-        {/* 코인 목록 */}
-        <div className="flex-1 overflow-y-auto p-6">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-              <span className="ml-3 text-gray-600">코인 목록을 불러오는 중...</span>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {availableCoins.map((coin) => {
-                const isSelected = selectedCoins.some(c => c.market === coin.market);
-                const canAdd = !isSelected && remainingSlots > 0;
-
-                return (
-                  <button
-                    key={coin.market}
-                    onClick={() => canAdd && onAddCoin(coin.market)}
-                    disabled={!canAdd}
-                    className={`p-4 border rounded-lg text-left transition-all ${isSelected
-                      ? "border-green-500 bg-green-50 text-green-800"
-                      : canAdd
-                        ? "border-gray-200 hover:border-blue-500 hover:bg-blue-50"
-                        : "border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed"
-                      }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="font-medium">{coin.korean_name}</div>
-                        <div className="text-sm text-gray-500">{coin.symbol}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-sm font-medium">
-                          {coin.current_price?.toLocaleString()}원
-                        </div>
-                        <div className={`text-xs ${coin.change_rate >= 0 ? "text-red-600" : "text-blue-600"
-                          }`}>
-                          {coin.change_rate >= 0 ? "+" : ""}{coin.change_rate?.toFixed(2)}%
-                        </div>
-                      </div>
-                    </div>
-                    {isSelected && (
-                      <div className="mt-2 text-xs text-green-600 flex items-center">
-                        <CheckCircleIcon className="w-4 h-4 mr-1" />
-                        이미 추가됨
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {!isLoading && availableCoins.length === 0 && (
-            <div className="text-center py-8 text-gray-500">
-              검색 결과가 없습니다.
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
