@@ -8,6 +8,7 @@ import {
   WifiIcon,
   WifiOffIcon,
 } from "lucide-react";
+import { formatCurrency, formatPercent } from "../../../../utils/formatters";
 
 const TradingControls = ({
   isActive,
@@ -17,182 +18,118 @@ const TradingControls = ({
   onReset,
   settings,
   onSettingsChange,
+  portfolio,
+  performance,
 }) => {
-  const [showSettings, setShowSettings] = useState(false);
+  const getConnectionIcon = () => {
+    switch (connectionStatus) {
+      case "connected":
+      case "active":
+        return <WifiIcon className="h-4 w-4 text-green-600" />;
+      default:
+        return <WifiOffIcon className="h-4 w-4 text-red-600" />;
+    }
+  };
 
-  const handleSettingChange = (key, value) => {
-    onSettingsChange({
-      ...settings,
-      [key]: value,
-    });
+  const getConnectionStatus = () => {
+    switch (connectionStatus) {
+      case "connected":
+        return "연결됨";
+      case "active":
+        return "활성";
+      case "connecting":
+        return "연결 중...";
+      default:
+        return "연결 안됨";
+    }
   };
 
   return (
-    <div className="flex items-center gap-3">
-      {/* Connection Status */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded-lg">
-        {connectionStatus === "connected" ? (
-          <WifiIcon className="w-4 h-4 text-green-600" />
-        ) : (
-          <WifiOffIcon className="w-4 h-4 text-red-600" />
-        )}
-        <span className="text-sm text-gray-600">
-          {connectionStatus === "connected" ? "연결됨" : "연결 안됨"}
-        </span>
+    <div className="space-y-4">
+      {/* 상태 표시 */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-gray-50 rounded-lg p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600">연결 상태</p>
+              <p className="font-semibold flex items-center space-x-2">
+                {getConnectionIcon()}
+                <span>{getConnectionStatus()}</span>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-gray-50 rounded-lg p-4">
+          <div>
+            <p className="text-sm text-gray-600">총 자산</p>
+            <p className="font-semibold text-lg">
+              {formatCurrency(portfolio.totalValue)}
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-gray-50 rounded-lg p-4">
+          <div>
+            <p className="text-sm text-gray-600">총 수익률</p>
+            <p
+              className={`font-semibold text-lg ${
+                performance.totalReturn >= 0 ? "text-green-600" : "text-red-600"
+              }`}
+            >
+              {formatPercent(performance.totalReturn)}
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-gray-50 rounded-lg p-4">
+          <div>
+            <p className="text-sm text-gray-600">승률</p>
+            <p className="font-semibold text-lg">
+              {performance.winRate.toFixed(1)}%
+            </p>
+          </div>
+        </div>
       </div>
 
-      {/* Control Buttons */}
-      <div className="flex items-center gap-2">
-        {!isActive ? (
-          <button
-            onClick={onStart}
-            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-          >
-            <PlayIcon className="w-4 h-4" />
-            시작
-          </button>
-        ) : (
-          <button
-            onClick={onStop}
-            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-          >
-            <PauseIcon className="w-4 h-4" />
-            중지
-          </button>
-        )}
-
-        <button
-          onClick={onReset}
-          disabled={isActive}
-          className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <RefreshCwIcon className="w-4 h-4" />
-          초기화
-        </button>
-
-        <div className="relative">
-          <button
-            onClick={() => setShowSettings(!showSettings)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <SettingsIcon className="w-4 h-4" />
-            설정
-          </button>
-
-          {/* Settings Dropdown */}
-          {showSettings && (
-            <div className="absolute right-0 top-full mt-2 w-80 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
-              <div className="p-4 border-b border-gray-200">
-                <h4 className="font-medium text-gray-900">거래 설정</h4>
-              </div>
-
-              <div className="p-4 space-y-4">
-                <div>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={settings.autoTrade}
-                      onChange={(e) =>
-                        handleSettingChange("autoTrade", e.target.checked)
-                      }
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    <span className="text-sm text-gray-700">자동 거래</span>
-                  </label>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-700 mb-1">
-                    리스크 레벨: {settings.riskLevel}
-                  </label>
-                  <input
-                    type="range"
-                    min="1"
-                    max="10"
-                    value={settings.riskLevel}
-                    onChange={(e) =>
-                      handleSettingChange("riskLevel", parseInt(e.target.value))
-                    }
-                    className="w-full"
-                  />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>보수적</span>
-                    <span>공격적</span>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-700 mb-1">
-                    최대 포지션 수
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="10"
-                    value={settings.maxPositions}
-                    onChange={(e) =>
-                      handleSettingChange(
-                        "maxPositions",
-                        parseInt(e.target.value)
-                      )
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-700 mb-1">
-                    손절매 (%)
-                  </label>
-                  <input
-                    type="number"
-                    min="-50"
-                    max="0"
-                    value={settings.stopLoss}
-                    onChange={(e) =>
-                      handleSettingChange(
-                        "stopLoss",
-                        parseFloat(e.target.value)
-                      )
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm text-gray-700 mb-1">
-                    익절매 (%)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={settings.takeProfit}
-                    onChange={(e) =>
-                      handleSettingChange(
-                        "takeProfit",
-                        parseFloat(e.target.value)
-                      )
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-              </div>
-
-              <div className="p-4 border-t border-gray-200">
-                <button
-                  onClick={() => setShowSettings(false)}
-                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  설정 완료
-                </button>
-              </div>
-            </div>
+      {/* 컨트롤 버튼 */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          {!isActive ? (
+            <button
+              onClick={onStart}
+              className="flex items-center space-x-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
+            >
+              <PlayIcon className="h-4 w-4" />
+              <span>거래 시작</span>
+            </button>
+          ) : (
+            <button
+              onClick={onStop}
+              className="flex items-center space-x-2 px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium"
+            >
+              <PauseIcon className="h-4 w-4" />
+              <span>거래 중지</span>
+            </button>
           )}
+
+          <button
+            onClick={onReset}
+            disabled={isActive}
+            className="flex items-center space-x-2 px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCwIcon className="h-4 w-4" />
+            <span>초기화</span>
+          </button>
+        </div>
+
+        <div className="text-sm text-gray-600">
+          거래 횟수:{" "}
+          <span className="font-medium">{performance.totalTrades}</span>
         </div>
       </div>
     </div>
   );
 };
 
-export default React.memo(TradingControls);
+export default TradingControls;

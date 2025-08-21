@@ -13,11 +13,12 @@ const CoinsTab = ({
   const [filter, setFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
 
-  // 실제 코인 목록 (기존 로직)
+  // 사용 가능한 코인 목록
   const availableCoins = useMemo(() => {
     if (tradingMode === "watchlist") {
       return watchlistCoins || [];
     }
+
     // 상위 코인들 (실제 API에서 가져온 데이터)
     return [
       { symbol: "BTC", name: "Bitcoin", price: 45000000 },
@@ -25,6 +26,9 @@ const CoinsTab = ({
       { symbol: "XRP", name: "Ripple", price: 650 },
       { symbol: "ADA", name: "Cardano", price: 520 },
       { symbol: "SOL", name: "Solana", price: 95000 },
+      { symbol: "DOT", name: "Polkadot", price: 8500 },
+      { symbol: "LINK", name: "Chainlink", price: 18000 },
+      { symbol: "MATIC", name: "Polygon", price: 1200 },
     ];
   }, [tradingMode, watchlistCoins]);
 
@@ -67,24 +71,17 @@ const CoinsTab = ({
   ) {
     return (
       <div className="text-center py-12">
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 max-w-md mx-auto">
-          <div className="text-yellow-800">
-            <h3 className="text-lg font-medium mb-2">관심코인이 필요합니다</h3>
-            <p className="text-sm mb-4">
-              관심코인 모드에서는 메인 화면에서 코인을 먼저 관심등록해주세요.
-            </p>
-            <p className="text-sm">
-              또는 전체코인 모드로 변경하여 상위 코인들로 테스트할 수 있습니다.
-            </p>
-          </div>
-          <div className="mt-4">
-            <button
-              onClick={() => setTradingMode("all")}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              전체코인 모드로 변경
-            </button>
-          </div>
+        <div className="text-gray-500 mb-4">
+          <p className="text-lg font-medium">관심코인이 없습니다</p>
+          <p>관심코인 모드에서는 메인 화면에서 코인을 먼저 관심등록해주세요.</p>
+        </div>
+        <div className="space-x-2">
+          <button
+            onClick={() => setTradingMode("all")}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            전체코인 모드로 변경
+          </button>
         </div>
       </div>
     );
@@ -92,41 +89,43 @@ const CoinsTab = ({
 
   return (
     <div className="space-y-6">
-      {/* Trading Mode Switch */}
+      {/* 모드 선택 */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <span className="text-sm font-medium text-gray-700">거래 모드:</span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setTradingMode("watchlist")}
-              className={`px-3 py-1 rounded text-sm ${
-                tradingMode === "watchlist"
-                  ? "bg-blue-100 text-blue-800"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-              }`}
-              disabled={isActive}
-            >
-              관심코인만
-            </button>
+        <div className="flex items-center space-x-4">
+          <div className="flex bg-gray-100 rounded-lg p-1">
             <button
               onClick={() => setTradingMode("all")}
-              className={`px-3 py-1 rounded text-sm ${
+              className={`px-4 py-2 rounded-md transition-colors ${
                 tradingMode === "all"
-                  ? "bg-blue-100 text-blue-800"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-gray-600 hover:text-gray-900"
               }`}
-              disabled={isActive}
             >
-              전체코인
+              전체 코인
+            </button>
+            <button
+              onClick={() => setTradingMode("watchlist")}
+              className={`px-4 py-2 rounded-md transition-colors ${
+                tradingMode === "watchlist"
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              관심 코인
             </button>
           </div>
         </div>
+
+        <div className="text-sm text-gray-600">
+          선택된 코인:{" "}
+          <span className="font-medium">{selectedCoins.length}개</span>
+        </div>
       </div>
 
-      {/* Search and Filter */}
-      <div className="flex flex-col sm:flex-row gap-4">
-        <div className="relative flex-1">
-          <SearchIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+      {/* 검색 및 필터 */}
+      <div className="flex items-center space-x-4">
+        <div className="flex-1 relative">
+          <SearchIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
           <input
             type="text"
             placeholder="코인 검색..."
@@ -136,12 +135,12 @@ const CoinsTab = ({
           />
         </div>
 
-        <div className="flex items-center gap-2">
-          <FilterIcon className="w-5 h-5 text-gray-400" />
+        <div className="flex items-center space-x-2">
+          <FilterIcon className="h-4 w-4 text-gray-400" />
           <select
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
             <option value="all">전체</option>
             <option value="selected">선택됨</option>
@@ -150,91 +149,71 @@ const CoinsTab = ({
         </div>
       </div>
 
-      {/* Selected Coins Summary */}
-      {selectedCoins.length > 0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-blue-700 font-medium">
-              선택된 코인: {selectedCoins.length}개
-            </span>
-            <div className="flex items-center gap-2 text-sm text-blue-600">
-              {selectedCoins.join(", ")}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Coins Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredCoins.map((coin) => {
-          const isSelected = selectedCoins.includes(coin.symbol);
-
-          return (
-            <div
-              key={coin.symbol}
-              className={`
-                p-4 border rounded-lg cursor-pointer transition-all
-                ${
-                  isSelected
-                    ? "border-blue-500 bg-blue-50 shadow-md"
-                    : "border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm"
-                }
-                ${isActive ? "pointer-events-none opacity-60" : ""}
-              `}
-              onClick={() => handleCoinToggle(coin.symbol)}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 bg-gradient-to-br from-orange-400 to-orange-600 rounded-full flex items-center justify-center">
-                    <span className="text-white text-xs font-bold">
-                      {coin.symbol.charAt(0)}
-                    </span>
-                  </div>
-                  <div>
-                    <div className="font-semibold text-gray-900">
-                      {coin.symbol}
-                    </div>
-                    <div className="text-xs text-gray-500">{coin.name}</div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1">
-                  {isSelected ? (
-                    <MinusIcon className="w-5 h-5 text-blue-600" />
-                  ) : (
-                    <PlusIcon className="w-5 h-5 text-gray-400" />
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-500">현재가</span>
-                  <span className="font-medium">
-                    ₩{coin.price?.toLocaleString()}
-                  </span>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {filteredCoins.length === 0 && (
-        <div className="text-center py-12 text-gray-500">
-          <SearchIcon className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+      {/* 코인 리스트 */}
+      {filteredCoins.length === 0 ? (
+        <div className="text-center py-8 text-gray-500">
           <p>검색 결과가 없습니다.</p>
         </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredCoins.map((coin) => {
+            const isSelected = selectedCoins.includes(coin.symbol);
+            return (
+              <div
+                key={coin.symbol}
+                className={`border rounded-lg p-4 transition-all cursor-pointer ${
+                  isSelected
+                    ? "border-blue-500 bg-blue-50"
+                    : "border-gray-200 hover:border-gray-300"
+                }`}
+                onClick={() => handleCoinToggle(coin.symbol)}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <span className="font-bold text-lg">{coin.symbol}</span>
+                      {isSelected && (
+                        <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                      )}
+                    </div>
+                    <p className="text-gray-600 text-sm">{coin.name}</p>
+                    <p className="text-sm font-medium mt-1">
+                      ₩{coin.price.toLocaleString()}
+                    </p>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCoinToggle(coin.symbol);
+                    }}
+                    className={`p-2 rounded-full transition-colors ${
+                      isSelected
+                        ? "bg-red-100 text-red-600 hover:bg-red-200"
+                        : "bg-green-100 text-green-600 hover:bg-green-200"
+                    }`}
+                    disabled={isActive}
+                  >
+                    {isSelected ? (
+                      <MinusIcon className="h-4 w-4" />
+                    ) : (
+                      <PlusIcon className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
 
-      {/* Footer Message */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
+      {/* 안내 메시지 */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
         <p className="text-blue-800 text-sm">
-          관심코인을 선택하고 실시간 페이퍼 트레이딩을 체험하세요
+          💡 관심코인을 선택하고 실시간 페이퍼 트레이딩을 체험하세요
         </p>
       </div>
     </div>
   );
 };
 
-export default React.memo(CoinsTab);
+export default CoinsTab;
