@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { formatCurrency, formatPercent } from "../../../utils/formatters";
 import { usePaperTrading } from "../../../hooks/usePaperTrading";
-import { useCoinStore } from "../../../stores/coinStore";
 
 // 컴포넌트 imports
 import CoinsTab from "./components/CoinsTab";
@@ -40,33 +39,23 @@ const PaperTrading = () => {
     connectionStatus,
     portfolio,
     logs,
-    currentSelectedCoins,
     selectedCoins,
     favoriteCoins,
-    topCoins,
     testMode,
     tradingMode,
     tradingSettings,
+    setTradingSettings,
     lastSignal,
-    marketSentiment,
-    marketCondition,
     monitoringStats,
     startPaperTrading,
     stopPaperTrading,
     toggleTestMode,
-    updatePortfolio,
     addFavoriteCoin,
     removeFavoriteCoin,
     setTradingMode,
-    setTradingSettings,
-    updateTopCoinsUI,
-    fetchMarketSentiment,
     refreshPriceAndAnalysis,
     hasSelectedCoins,
     selectedCoinsCount,
-    tradingStats,
-    getLogSystemStatus,
-    exportLogs
   } = usePaperTrading("demo-user");
 
   // UI 상태
@@ -155,7 +144,7 @@ const PaperTrading = () => {
           />
         );
       case "trades":
-        return <TradesTab trades={portfolio?.trades || []} />;
+        return <TradesTab trades={portfolio?.trades || portfolio?.tradeHistory || []} />;
       case "signals":
         return <SignalsTab signals={logs || []} isActive={isActive} />;
       case "logs":
@@ -370,7 +359,10 @@ const PaperTrading = () => {
             <TradingSettings
               settings={tradingSettings}
               onSettingsChange={setTradingSettings}
+              isActive={isActive}
               onClose={() => setShowSettings(false)}
+              testMode={testMode}
+              onToggleTestMode={toggleTestMode}
             />
           </div>
         )}

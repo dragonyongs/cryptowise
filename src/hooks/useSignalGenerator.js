@@ -50,7 +50,7 @@ export const useSignalGenerator = (
     return () => clearInterval(interval);
   }, []);
 
-  // ✅ 거래 신호 생성 (최신 서비스 사용)
+  // ✅ 거래 신호 생성 (최신 서비스 사용) - 개선된 버전
   const generateTradingSignal = useCallback(
     async (marketData) => {
       try {
@@ -78,7 +78,6 @@ export const useSignalGenerator = (
         const cacheKey = `${symbol}_${JSON.stringify(tradingSettingsRef.current)}_${testModeRef.current}`;
         const cachedSignal = signalCache.current.get(cacheKey);
         if (cachedSignal && now - cachedSignal.timestamp < 30000) {
-          // 30초 캐시
           return cachedSignal.signal;
         }
 
@@ -87,25 +86,38 @@ export const useSignalGenerator = (
           signalsEvaluated: (prev.signalsEvaluated || 0) + 1,
         }));
 
-        // ✅ 최신 신호 생성기 사용
+        // 🎯 NEW: 거래 조건에서 동적으로 값 추출
+        const tradingConditions =
+          tradingSettingsRef.current.tradingConditions || {};
+        const buyConditions = tradingConditions.buyConditions || {};
+        const sellConditions = tradingConditions.sellConditions || {};
+        const riskManagement = tradingConditions.riskManagement || {};
+
+        // 🎯 동적 설정값 추출 (테스트 모드 고려)
+        const minBuyScore =
+          buyConditions.minBuyScore || (testModeRef.current ? 6.0 : 8.0);
+        const strongBuyScore =
+          buyConditions.strongBuyScore || (testModeRef.current ? 8.0 : 9.0);
+        const rsiOversold =
+          buyConditions.rsiOversold || (testModeRef.current ? 35 : 30);
+        const rsiOverbought =
+          sellConditions.rsiOverbought || (testModeRef.current ? 65 : 70);
+
+        // ✅ 최신 신호 생성기 사용 (동적 설정값 전달)
         const signals = await signalGenerator.generateSignalsWithSettings(
           [marketData],
           {
             ...tradingSettingsRef.current,
-            // 테스트 모드 설정 추가
-            ...(testModeRef.current
-              ? {
-                  minBuyScore: 6.0,
-                  minSellScore: 4.5,
-                  strongBuyScore: 8.0,
-                  strategy: "test_mode",
-                }
-              : {
-                  minBuyScore: 7.5,
-                  minSellScore: 6.0,
-                  strongBuyScore: 9.0,
-                  strategy: "live_mode",
-                }),
+
+            // 🎯 거래 조건에서 추출한 실제 설정값 사용
+            minBuyScore,
+            strongBuyScore,
+            rsiOversold,
+            rsiOverbought,
+
+            // 기존 테스트/실전 모드 설정은 유지하되 동적 값으로 덮어씀
+            strategy: testModeRef.current ? "test_mode" : "live_mode",
+
             // 시장 조건 반영
             ...(marketCondition
               ? {
@@ -114,6 +126,7 @@ export const useSignalGenerator = (
                   marketScore: marketCondition.overallBuyScore || 50,
                 }
               : {}),
+
             // 감정 지수 반영
             ...(marketSentiment
               ? {
@@ -145,10 +158,10 @@ export const useSignalGenerator = (
           timestamp: now,
         });
 
-        // ✅ 신호 품질 검증
-        if (signal.totalScore < (testModeRef.current ? 6.0 : 7.5)) {
+        // 🎯 신호 품질 검증 (동적 임계값 사용)
+        if (signal.totalScore < minBuyScore) {
           addLog?.(
-            `📊 ${symbol} 신호 점수 부족: ${signal.totalScore}`,
+            `📊 ${symbol} 신호 점수 부족: ${signal.totalScore} < ${minBuyScore}`,
             "debug"
           );
           updateStats?.((prev) => ({
@@ -161,7 +174,7 @@ export const useSignalGenerator = (
         // ✅ 로그 및 통계 업데이트
         const modeText = testModeRef.current ? "테스트" : "실전";
         addLog?.(
-          `🎯 ${symbol} ${signal.type} 신호 생성! 점수: ${signal.totalScore.toFixed(1)} (${modeText} 모드)`,
+          `🎯 ${symbol} ${signal.type} 신호 생성! 점수: ${signal.totalScore.toFixed(1)} (${modeText} 모드, 임계값: ${minBuyScore})`,
           signal.type === "BUY" ? "success" : "warning"
         );
 
@@ -171,6 +184,12 @@ export const useSignalGenerator = (
           conditionsMet: (prev.conditionsMet || 0) + 1,
         }));
 
+        // 🎯 성공시에도 상세 정보 로그
+        addLog(
+          `🎯 [${symbol}] ${signal.type} 신호 검증 통과! 점수: ${signal.totalScore.toFixed(1)}, 사용된 설정: minBuyScore=${minBuyScore}`,
+          "success"
+        );
+
         return {
           ...signal,
           // ✅ 추가 메타데이터
@@ -179,6 +198,13 @@ export const useSignalGenerator = (
           cooldownTime,
           marketCondition: marketCondition?.buyability?.level,
           sentiment: marketSentiment?.overall,
+          // 🎯 사용된 설정값 기록
+          usedSettings: {
+            minBuyScore,
+            strongBuyScore,
+            rsiOversold,
+            rsiOverbought,
+          },
         };
       } catch (error) {
         addLog?.(

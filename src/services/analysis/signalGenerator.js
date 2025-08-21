@@ -1,12 +1,12 @@
-// src/services/analysis/signalGenerator.js - 완전 개선된 테스트 모드 지원 + 성능 최적화 버전
+// src/services/analysis/signalGenerator.js - 중앙 데이터 매니저 연동 + API 최적화 버전
 
 import { technicalAnalysis } from "./technicalAnalysis.js";
 
 /**
  * CryptoWise 차세대 신호 생성기
+ * - 중앙 데이터 매니저 연동으로 API 호출 최소화
  * - 테스트 모드와 실전 모드 완전 지원
- * - 설정 기반 유연한 신호 생성
- * - 성능 최적화된 분석 엔진
+ * - 캐시 기반 고성능 신호 생성
  * - 코인별 맞춤형 분석 전략
  */
 class SignalGenerator {
@@ -75,6 +75,11 @@ class SignalGenerator {
     this.isTestMode = false;
     this.currentThresholds = { ...this.defaultThresholds };
 
+    // 🎯 NEW: 중앙 데이터 매니저 연동
+    this.cachedMarketData = new Map();
+    this.dataSubscription = null;
+    this.isDataReady = false;
+
     // 성능 최적화
     this.scoreCache = new Map();
     this.lastCacheClean = Date.now();
@@ -82,6 +87,75 @@ class SignalGenerator {
 
     // 디버그 모드
     this.debugMode = process.env.NODE_ENV === "development";
+
+    // 🎯 NEW: 통계 추적
+    this.stats = {
+      totalAnalyses: 0,
+      cacheHits: 0,
+      avgAnalysisTime: 0,
+      lastAnalysisTime: 0,
+    };
+  }
+
+  // 🎯 NEW: 중앙 데이터 매니저 초기화 및 구독
+  async initialize(centralDataManager) {
+    if (this.dataSubscription) {
+      console.log("🔄 SignalGenerator 이미 초기화됨");
+      return;
+    }
+
+    try {
+      console.log("🚀 SignalGenerator 중앙 데이터 매니저 연동 시작");
+
+      // 중앙 데이터 매니저 구독
+      this.dataSubscription = centralDataManager.subscribe(
+        "signalGenerator",
+        (data) => {
+          this.onDataReceived(data);
+        },
+        ["prices", "markets"]
+      );
+
+      this.isDataReady = true;
+      this.log("✅ 중앙 데이터 매니저 구독 완료", "success");
+    } catch (error) {
+      this.log(`❌ 중앙 데이터 매니저 연동 실패: ${error.message}`, "error");
+      throw error;
+    }
+  }
+
+  // 🎯 NEW: 데이터 수신 콜백
+  onDataReceived(data) {
+    try {
+      // 가격 데이터 캐시 업데이트
+      if (data.prices) {
+        const priceEntries = Object.entries(data.prices);
+        for (const [symbol, priceEntry] of priceEntries) {
+          if (priceEntry && priceEntry.data) {
+            this.cachedMarketData.set(symbol, priceEntry.data);
+          }
+        }
+
+        this.log(
+          `📊 캐시 업데이트: ${priceEntries.length}개 코인 데이터`,
+          "debug"
+        );
+      }
+
+      // 실시간 신호 생성 트리거 (필요시)
+      if (this.isDataReady) {
+        this.triggerRealTimeAnalysis();
+      }
+    } catch (error) {
+      this.log(`❌ 데이터 수신 처리 실패: ${error.message}`, "error");
+    }
+  }
+
+  // 🎯 NEW: 실시간 분석 트리거 (선택적)
+  triggerRealTimeAnalysis() {
+    // 실시간 신호 생성이 필요한 경우 여기서 처리
+    // 현재는 요청 기반으로만 동작
+    this.log("📡 실시간 데이터 수신됨", "debug");
   }
 
   // ✅ 테스트 모드 설정
@@ -98,7 +172,6 @@ class SignalGenerator {
 
     // 캐시 초기화 (모드 변경시)
     this.scoreCache.clear();
-
     return this;
   }
 
@@ -111,14 +184,36 @@ class SignalGenerator {
     console.log(`${timestamp} ${prefix} ${message}`);
   }
 
-  // ✅ 설정 기반 신호 생성 (메인 함수)
-  async generateSignalsWithSettings(marketDataArray, userSettings = {}) {
+  // 🎯 NEW: 캐시된 데이터 기반 신호 생성 (메인 함수)
+  async generateSignalsWithSettings(symbolList, userSettings = {}) {
+    const startTime = Date.now();
+
     try {
-      this.log(`🎯 설정 기반 신호 생성 시작: ${marketDataArray.length}개 코인`);
-      this.cleanCache(); // 캐시 정리
+      this.log(`🎯 캐시 기반 신호 생성 시작: ${symbolList.length}개 코인`);
+      this.cleanCache();
 
       const signals = [];
       const effectiveSettings = this.mergeSettings(userSettings);
+
+      // 🎯 캐시된 데이터에서 마켓 데이터 구성
+      const marketDataArray = [];
+
+      for (const symbol of symbolList) {
+        const cachedData = this.cachedMarketData.get(symbol);
+        if (cachedData) {
+          marketDataArray.push({
+            ...cachedData,
+            symbol: symbol,
+          });
+        } else {
+          this.log(`⚠️ ${symbol} 캐시된 데이터 없음`, "warning");
+        }
+      }
+
+      if (marketDataArray.length === 0) {
+        this.log("❌ 분석 가능한 캐시된 데이터가 없음", "warning");
+        return [];
+      }
 
       // ✅ 병렬 처리로 성능 최적화
       const promises = marketDataArray.map((marketData) =>
@@ -149,8 +244,12 @@ class SignalGenerator {
       // 점수 높은 순으로 정렬
       const sortedSignals = signals.sort((a, b) => b.totalScore - a.totalScore);
 
+      // 🎯 통계 업데이트
+      const analysisTime = Date.now() - startTime;
+      this.updateStats(analysisTime, marketDataArray.length);
+
       this.log(
-        `📈 최종 신호: ${sortedSignals.length}개 생성 (상위 5개: ${sortedSignals
+        `📈 최종 신호: ${sortedSignals.length}개 생성 (${analysisTime}ms, 상위 5개: ${sortedSignals
           .slice(0, 5)
           .map((s) => `${s.symbol}:${s.totalScore.toFixed(1)}`)
           .join(", ")})`
@@ -161,6 +260,16 @@ class SignalGenerator {
       this.log(`❌ 신호 생성 전체 오류: ${error.message}`, "error");
       return [];
     }
+  }
+
+  // 🎯 NEW: 통계 업데이트
+  updateStats(analysisTime, coinsAnalyzed) {
+    this.stats.totalAnalyses++;
+    this.stats.lastAnalysisTime = analysisTime;
+    this.stats.avgAnalysisTime =
+      (this.stats.avgAnalysisTime * (this.stats.totalAnalyses - 1) +
+        analysisTime) /
+      this.stats.totalAnalyses;
   }
 
   // ✅ 설정 병합 (테스트 모드 고려)
@@ -178,19 +287,27 @@ class SignalGenerator {
     return mergedSettings;
   }
 
-  // ✅ 개별 코인 분석 (설정 기반)
+  // ✅ 개별 코인 분석 (설정 기반) - 캐시 우선 사용
   async analyzeSymbolWithSettings(marketData, settings) {
     if (!marketData || !marketData.symbol) {
       throw new Error("잘못된 시장 데이터");
     }
 
-    const { symbol, price, volume24h, rsi, macd, bollinger } = marketData;
+    const {
+      symbol,
+      trade_price: price,
+      acc_trade_price_24h: volume24h,
+      rsi,
+      macd,
+      bollinger,
+    } = marketData;
 
     // 캐시 확인
     const cacheKey = `${symbol}_${JSON.stringify(settings)}_${this.isTestMode}`;
     if (this.scoreCache.has(cacheKey)) {
       const cached = this.scoreCache.get(cacheKey);
       if (Date.now() - cached.timestamp < this.cacheLifetime) {
+        this.stats.cacheHits++;
         return { ...cached.signal, timestamp: new Date() };
       }
     }
@@ -212,6 +329,7 @@ class SignalGenerator {
         totalScore,
         settings
       );
+
       if (!signalType) return null;
 
       // 4. 신호 객체 생성
@@ -219,7 +337,7 @@ class SignalGenerator {
         id: `${symbol}_${Date.now()}`,
         symbol,
         type: signalType,
-        price,
+        price: price || marketData.trade_price,
         totalScore: Number(totalScore.toFixed(2)),
         technicalScore: Number(totalScore.toFixed(2)),
         fundamentalScore: 0, // 향후 확장용
@@ -250,8 +368,9 @@ class SignalGenerator {
         },
         metadata: {
           analysisTime: Date.now(),
-          version: "2.0.0",
-          generator: "CryptoWise_SignalGenerator",
+          version: "3.0.0",
+          generator: "CryptoWise_SignalGenerator_Optimized",
+          dataSource: "centralCache",
         },
       };
 
@@ -288,6 +407,7 @@ class SignalGenerator {
       if (!rsi || rsi < rsiLimit) {
         const signalStrength =
           totalScore >= settings.strongBuyScore ? "STRONG_BUY" : "BUY";
+
         this.log(
           `✅ ${symbol} ${signalStrength} 신호 발생! (점수: ${totalScore.toFixed(1)}, RSI: ${rsi?.toFixed(1)})`,
           "info"
@@ -300,7 +420,6 @@ class SignalGenerator {
     const sellThreshold = this.isTestMode
       ? settings.minSellScore || 4.5
       : settings.minSellScore || 6.0;
-
     const rsiSellLimit = this.isTestMode ? 75 : 80;
 
     if (totalScore <= sellThreshold || (rsi && rsi > rsiSellLimit)) {
@@ -317,9 +436,8 @@ class SignalGenerator {
 
   // ✅ 사유 생성 (테스트 모드 표시)
   generateReasonWithSettings(marketData, signalType, totalScore, settings) {
-    const { symbol, rsi, volume24h, avgVolume } = marketData;
-    const volumeRatio =
-      volume24h && avgVolume ? (volume24h / avgVolume).toFixed(1) : "미상";
+    const { symbol, rsi, acc_trade_price_24h: volume24h } = marketData;
+    const volumeRatio = "미상"; // 평균 거래량 데이터가 없어서 임시
     const modeLabel = this.isTestMode ? "테스트" : "실전";
     const strategyLabel = settings.strategy || "default";
 
@@ -340,8 +458,9 @@ class SignalGenerator {
   calculateTechnicalScores(marketData) {
     const {
       symbol,
-      price,
-      volume24h,
+      trade_price: price,
+      signed_change_rate: changeRate,
+      acc_trade_price_24h: volume24h,
       rsi,
       macd,
       bollinger,
@@ -355,31 +474,61 @@ class SignalGenerator {
     const coinRules =
       this.coinSpecificRules[symbol] || this.coinSpecificRules["ETH"];
 
+    // 🎯 NEW: RSI가 없으면 가격 변동률로 추정
+    const effectiveRsi = rsi || this.estimateRSIFromChange(changeRate);
+
     const scores = {
-      rsi: this.calculateRsiScore(rsi, coinRules),
+      rsi: this.calculateRsiScore(effectiveRsi, coinRules),
       movingAverage: this.calculateMovingAverageScore({ price, ma20, ma60 }),
       bollinger: this.calculateBollingerScore(bollinger, price),
       macd: this.calculateMacdScore(macd),
       volume: this.calculateVolumeScore(
         volume24h,
-        avgVolume,
+        avgVolume || volume24h * 0.8,
         coinRules.volumeMultiplier
       ),
       support: this.calculateSupportResistanceScore({
         price,
-        support,
-        resistance,
+        support: null,
+        resistance: null,
       }),
     };
 
     const totalScore = this.calculateTotalScore(scores);
-
+    this.log(
+      `🎯 ${symbol} 분석결과: 변동률=${(changeRate * 100).toFixed(2)}% | RSI=${effectiveRsi?.toFixed(1)} | 총점=${totalScore.toFixed(2)}`,
+      "debug"
+    );
     this.log(
       `🎯 ${symbol} 기술적분석: RSI=${scores.rsi.toFixed(1)}, MA=${scores.movingAverage.toFixed(1)}, 볼링거=${scores.bollinger.toFixed(1)}, MACD=${scores.macd.toFixed(1)}, 거래량=${scores.volume.toFixed(1)}, 지지저항=${scores.support.toFixed(1)} → 총점=${totalScore.toFixed(2)}`,
       "debug"
     );
 
+    console.log(`📊 [${symbol}] 계산된 점수:`, {
+      rsi: scores.rsi.toFixed(1),
+      ma: scores.movingAverage.toFixed(1),
+      총점: this.calculateTotalScore(scores).toFixed(1),
+    });
+
     return scores;
+  }
+
+  // 🎯 NEW: 가격 변동률로 RSI 추정
+  estimateRSIFromChange(changeRate) {
+    if (!changeRate) return 50; // 중간값
+
+    const changePercent = changeRate * 100;
+
+    // 간단한 RSI 추정 로직
+    if (changePercent <= -5)
+      return 25; // 강한 하락 → 과매도
+    else if (changePercent <= -3) return 35;
+    else if (changePercent <= -1) return 45;
+    else if (changePercent >= 5)
+      return 75; // 강한 상승 → 과매수
+    else if (changePercent >= 3) return 65;
+    else if (changePercent >= 1) return 55;
+    else return 50; // 중립
   }
 
   // ✅ RSI 점수 계산 (향상된 버전)
@@ -528,7 +677,12 @@ class SignalGenerator {
 
   // ✅ 위험 점수 계산
   calculateRiskScore(marketData) {
-    const { rsi, volume24h, avgVolume, price } = marketData;
+    const {
+      rsi,
+      acc_trade_price_24h: volume24h,
+      avgVolume,
+      trade_price: price,
+    } = marketData;
     let riskScore = 5.0; // 기본 위험도
 
     // RSI 극값 시 위험도 증가
@@ -610,8 +764,8 @@ class SignalGenerator {
   }
 
   // ✅ 기존 호환성 유지 함수들
-  async generateSignals(marketDataArray, strategy = "cryptowise") {
-    return this.generateSignalsWithSettings(marketDataArray, { strategy });
+  async generateSignals(symbolList, strategy = "cryptowise") {
+    return this.generateSignalsWithSettings(symbolList, { strategy });
   }
 
   async analyzeSymbol(marketData, strategy) {
@@ -626,17 +780,41 @@ class SignalGenerator {
       weights: { ...this.weights },
       coinRules: { ...this.coinSpecificRules },
       cacheSize: this.scoreCache.size,
+      dataReady: this.isDataReady,
+      stats: { ...this.stats },
     };
   }
 
   // ✅ 성능 통계
   getPerformanceStats() {
+    const cacheHitRate =
+      this.stats.totalAnalyses > 0
+        ? ((this.stats.cacheHits / this.stats.totalAnalyses) * 100).toFixed(1)
+        : 0;
+
     return {
       cacheSize: this.scoreCache.size,
-      cacheHitRate: this.cacheHitRate || 0,
-      avgAnalysisTime: this.avgAnalysisTime || 0,
-      totalAnalyses: this.totalAnalyses || 0,
+      marketDataCacheSize: this.cachedMarketData.size,
+      cacheHitRate: `${cacheHitRate}%`,
+      avgAnalysisTime: `${this.stats.avgAnalysisTime.toFixed(1)}ms`,
+      totalAnalyses: this.stats.totalAnalyses,
+      isDataReady: this.isDataReady,
+      lastAnalysisTime: this.stats.lastAnalysisTime,
     };
+  }
+
+  // 🎯 NEW: 리소스 정리
+  cleanup() {
+    if (this.dataSubscription) {
+      this.dataSubscription(); // 구독 해제
+      this.dataSubscription = null;
+    }
+
+    this.cachedMarketData.clear();
+    this.scoreCache.clear();
+    this.isDataReady = false;
+
+    this.log("🧹 SignalGenerator 리소스 정리 완료");
   }
 }
 
@@ -658,3 +836,9 @@ export const analyzeSymbolWithSettings =
 export const setTestMode = signalGenerator.setTestMode.bind(signalGenerator);
 export const getCurrentSettings =
   signalGenerator.getCurrentSettings.bind(signalGenerator);
+
+// 🎯 NEW: 초기화 및 정리 함수
+export const initializeSignalGenerator =
+  signalGenerator.initialize.bind(signalGenerator);
+export const cleanupSignalGenerator =
+  signalGenerator.cleanup.bind(signalGenerator);

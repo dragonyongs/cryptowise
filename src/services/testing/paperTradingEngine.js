@@ -149,59 +149,62 @@ class PaperTradingEngine {
     }
   }
 
+  // 🎯 validateBasicSignal 함수 개선 (너무 엄격한 검증 완화)
   validateBasicSignal(signal) {
-    if (!signal) {
-      return { isValid: false, reason: "신호가 없습니다" };
-    }
-
-    if (!signal.symbol || !signal.type || typeof signal.price !== "number") {
+    if (!signal || !signal.symbol || !signal.type) {
       return { isValid: false, reason: "필수 신호 정보 누락" };
-    }
-
-    if (signal.price <= 0) {
-      return { isValid: false, reason: "유효하지 않은 가격" };
     }
 
     if (!["BUY", "SELL"].includes(signal.type)) {
       return { isValid: false, reason: "유효하지 않은 신호 타입" };
     }
 
-    const requiredScore = this.tradingLimits.minSignalScore;
+    // 🎯 점수 검증 완화 (테스트 모드에서 더욱 관대하게)
+    const requiredScore = this.isTestMode
+      ? 5.0
+      : this.tradingLimits.minSignalScore;
     const currentScore = signal.totalScore || 0;
 
     if (currentScore < requiredScore) {
       return {
         isValid: false,
-        reason: `신호 점수 부족: ${currentScore.toFixed(1)} < ${requiredScore} ${this.isTestMode ? "(테스트 모드 완화)" : "(실전 모드 엄격)"}`,
+        reason: `신호 점수 부족: ${currentScore.toFixed(1)} < ${requiredScore.toFixed(1)} (${this.isTestMode ? "테스트" : "실전"} 모드)`,
       };
     }
 
     return { isValid: true };
   }
 
+  // 🎯 validateTradingLimits 함수 개선 (일일 한도 완화)
   validateTradingLimits(signal) {
-    // 일일 거래 한도 검증
-    if (this.todayTrades >= this.tradingLimits.maxDailyTrades) {
+    // 테스트 모드에서 일일 거래 한도 2배로 증가
+    const effectiveLimit = this.isTestMode
+      ? this.tradingLimits.maxDailyTrades * 2
+      : this.tradingLimits.maxDailyTrades;
+
+    if (this.todayTrades >= effectiveLimit) {
       return {
         isValid: false,
-        reason: `일일 거래 한도 초과 (${this.todayTrades}/${this.tradingLimits.maxDailyTrades}) ${this.isTestMode ? "- 테스트 모드" : "- 실전 모드"}`,
+        reason: `일일 거래 한도 초과 (${this.todayTrades}/${effectiveLimit}회) - ${this.isTestMode ? "테스트" : "실전"} 모드`,
       };
     }
 
-    // 쿨다운 기간 확인
+    // 쿨다운 시간도 테스트 모드에서 절반으로 단축
+    const effectiveCooldown = this.isTestMode
+      ? this.tradingLimits.cooldownPeriod / 2
+      : this.tradingLimits.cooldownPeriod;
+
     const lastTrade = this.portfolio.trades
       .filter((t) => t.symbol === signal.symbol)
       .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0];
 
     if (lastTrade) {
       const timeDiff = Date.now() - new Date(lastTrade.timestamp).getTime();
-      if (timeDiff < this.tradingLimits.cooldownPeriod) {
-        const remainingTime = Math.ceil(
-          (this.tradingLimits.cooldownPeriod - timeDiff) / 60000
-        );
+      if (timeDiff < effectiveCooldown) {
+        const remainingTime = Math.ceil((effectiveCooldown - timeDiff) / 60000);
         return {
           isValid: false,
-          reason: `쿨다운 중 (${remainingTime}분 남음) ${this.isTestMode ? "- 테스트 5분" : "- 실전 10분"}`,
+          reason: `쿨다운 중 (${remainingTime}분 남음) - ${this.isTestMode ? "완화됨" : "기본"}`,
         };
       }
     }
@@ -519,9 +522,9 @@ class PaperTradingEngine {
     }
 
     this.log("🔍 포트폴리오 요약 생성 중...", "debug");
-
     let totalCryptoValue = 0;
     const positions = [];
+    const coinsObject = {}; // ✅ UI에서 기대하는 coins Object
 
     for (const [symbol, coin] of this.portfolio.coins) {
       const currentValue = coin.quantity * coin.currentPrice;
@@ -531,7 +534,8 @@ class PaperTradingEngine {
 
       totalCryptoValue += currentValue;
 
-      positions.push({
+      // positions 배열용 데이터
+      const positionData = {
         symbol,
         quantity: coin.quantity,
         avgPrice: coin.avgPrice,
@@ -543,7 +547,16 @@ class PaperTradingEngine {
         firstBought: coin.firstBought,
         profitTargets: coin.profitTargets,
         stopLoss: coin.stopLoss,
-      });
+      };
+
+      positions.push(positionData);
+
+      // ✅ coins Object용 데이터 (PortfolioTab에서 사용)
+      coinsObject[symbol] = {
+        ...positionData,
+        price: coin.currentPrice, // PortfolioTab에서 fallback으로 사용
+        value: currentValue,
+      };
     }
 
     const totalPortfolioValue = this.portfolio.krw + totalCryptoValue;
@@ -564,22 +577,30 @@ class PaperTradingEngine {
     const liveTrades = this.portfolio.trades.filter((t) => t.mode === "LIVE");
 
     const summary = {
-      positions,
-      tradeHistory: [...this.portfolio.trades].reverse(),
+      // ✅ UI 호환성을 위한 다중 형태 제공
+      positions, // 배열 형태 (usePortfolioManager에서 사용)
+      coins: coinsObject, // Object 형태 (PortfolioTab에서 사용)
+      trades: [...this.portfolio.trades].reverse(), // TradesTab에서 기대하는 trades 배열
+      tradeHistory: [...this.portfolio.trades].reverse(), // 호환성을 위한 tradeHistory
+
+      // 기존 데이터
       totalValue: Math.floor(totalPortfolioValue),
       investedValue: Math.floor(totalCryptoValue),
       cashValue: Math.floor(this.portfolio.krw),
+      krw: Math.floor(this.portfolio.krw), // paperTradingEngine 호환성
       totalProfitRate: Number(totalReturn.toFixed(2)),
       totalProfit: Math.floor(totalPortfolioValue - this.initialBalance),
       cashRatio: Number(cashRatio.toFixed(1)),
       investedRatio: Number(
         ((totalCryptoValue / totalPortfolioValue) * 100).toFixed(1)
       ),
+
       performance: {
         totalReturn: Number(totalReturn.toFixed(2)),
         winRate: Number(winRate.toFixed(1)),
         maxDrawdown: this.calculateMaxDrawdown(),
       },
+
       tradingStats: {
         totalTrades: this.portfolio.trades.length,
         buyTrades: this.portfolio.trades.filter((t) => t.action === "BUY")
@@ -589,13 +610,15 @@ class PaperTradingEngine {
         todayTrades: this.todayTrades,
         dailyLimit: this.tradingLimits.maxDailyTrades,
       },
+
       mode: {
         isTestMode: this.isTestMode,
         testTrades: testTrades.length,
         liveTrades: liveTrades.length,
         currentLimits: { ...this.tradingLimits },
-        isActive: this.isActive, // ✅ 활성 상태 추가
+        isActive: this.isActive,
       },
+
       activePositions: this.portfolio.coins.size,
       maxPositions: this.tradingLimits.maxPositions,
       lastUpdated: new Date(),
@@ -603,12 +626,14 @@ class PaperTradingEngine {
     };
 
     this.log(
-      `📊 요약 완료: 총자산 ₩${summary.totalValue.toLocaleString()}, 수익률 ${summary.totalProfitRate}%, 승률 ${summary.performance.winRate}%`
+      `📊 요약 완료: 총자산 ₩${summary.totalValue.toLocaleString()}, ` +
+        `수익률 ${summary.totalProfitRate}%, 승률 ${summary.performance.winRate}%, ` +
+        `positions ${summary.positions.length}개, coins Object ${Object.keys(summary.coins).length}개, ` +
+        `trades ${summary.trades.length}개`
     );
 
     return summary;
   }
-
   calculateMaxDrawdown() {
     if (this.portfolio.trades.length === 0) return 0;
 

@@ -1,5 +1,7 @@
+// src/services/analysis/technicalAnalysis.js
+
 /**
- * 기술적 분석 유틸리티
+ * 기술적 분석 유틸리티 클래스
  */
 export class TechnicalAnalysis {
   /**
@@ -73,10 +75,17 @@ export class TechnicalAnalysis {
   }
 
   /**
-   * 볼링거밴드 계산
+   * 볼린저밴드 계산
    */
   static calculateBollingerBands(prices, period = 20, stdDev = 2) {
-    if (!prices || prices.length < period) return null;
+    if (!prices || prices.length < period) {
+      const currentPrice = prices?.[prices.length - 1] || 0;
+      return {
+        upper: currentPrice * 1.02,
+        middle: currentPrice,
+        lower: currentPrice * 0.98,
+      };
+    }
 
     const recentPrices = prices.slice(-period);
     const sma = this.sma(recentPrices);
@@ -101,7 +110,87 @@ export class TechnicalAnalysis {
 
     return Math.sqrt(avgSquaredDiff);
   }
+
+  /**
+   * 지지/저항선 계산
+   */
+  static findSupportResistance(prices, period = 20) {
+    if (!prices || prices.length < period)
+      return { support: null, resistance: null };
+
+    const recentPrices = prices.slice(-period);
+    const high = Math.max(...recentPrices);
+    const low = Math.min(...recentPrices);
+
+    // 간단한 지지/저항선 계산
+    const range = high - low;
+    const support = low + range * 0.236; // 피보나치 23.6%
+    const resistance = high - range * 0.236;
+
+    return { support, resistance };
+  }
+
+  /**
+   * 거래량 평균 계산
+   */
+  static calculateVolumeAverage(volumes, period = 20) {
+    if (!volumes || volumes.length < period) return null;
+    const recentVolumes = volumes.slice(-period);
+    return this.sma(recentVolumes);
+  }
 }
 
-export const technicalAnalysis = new TechnicalAnalysis();
+// 🎯 개별 함수들을 편의상 named export로 제공
+export const sma = (prices, period = null) => {
+  if (!prices || !Array.isArray(prices) || prices.length === 0) {
+    return null;
+  }
+
+  const validPrices = prices.filter(
+    (p) => p !== null && p !== undefined && !isNaN(p)
+  );
+  if (validPrices.length === 0) return null;
+
+  const actualPeriod = period || validPrices.length;
+  const dataToUse = validPrices.slice(-actualPeriod);
+
+  const sum = dataToUse.reduce((acc, price) => acc + price, 0);
+  return sum / dataToUse.length;
+};
+
+export const calculateRSI = (prices, period = 14) => {
+  return TechnicalAnalysis.calculateRSI(prices, period);
+};
+
+export const calculateMACD = (
+  prices,
+  fastPeriod = 12,
+  slowPeriod = 26,
+  signalPeriod = 9
+) => {
+  return TechnicalAnalysis.calculateMACD(
+    prices,
+    fastPeriod,
+    slowPeriod,
+    signalPeriod
+  );
+};
+
+export const calculateBollingerBands = (prices, period = 20, stdDev = 2) => {
+  return TechnicalAnalysis.calculateBollingerBands(prices, period, stdDev);
+};
+
+// 🎯 통합 객체 export (기존 코드 호환성을 위해)
+export const technicalAnalysis = {
+  sma,
+  calculateRSI,
+  calculateMACD,
+  calculateBollingerBands,
+  findSupportResistance: (prices, period = 20) =>
+    TechnicalAnalysis.findSupportResistance(prices, period),
+  calculateVolumeAverage: (volumes, period = 20) =>
+    TechnicalAnalysis.calculateVolumeAverage(volumes, period),
+};
+
+// 🎯 기본 export는 클래스만
 export default TechnicalAnalysis;
