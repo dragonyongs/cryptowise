@@ -1,268 +1,481 @@
-// src/components/features/testing/components/CoinsTab.jsx - 에러 수정 버전
+// src/components/features/testing/components/CoinsTab.jsx - 데이터 연결 수정
 
-import React, { useState, useMemo } from "react";
-import { SearchIcon, PlusIcon, MinusIcon, FilterIcon, StarIcon, TrendingUpIcon } from "lucide-react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
+import {
+  SearchIcon, PlusIcon, MinusIcon, CoinsIcon, StarIcon, TrendingUpIcon,
+  RefreshCwIcon, HeartIcon, InfoIcon, CheckCircleIcon, AlertCircleIcon,
+  WifiIcon, WifiOffIcon
+} from "lucide-react";
+import { useCoinStore } from "../../../../stores/coinStore";
 
 const CoinsTab = ({
-  selectedCoins,
+  selectedCoins = [],
   onCoinsChange,
-  watchlistCoins,
-  tradingMode,
+  favoriteCoins = [], // 🎯 관심 코인 목록
+  onFavoriteCoinsChange, // 🎯 관심 코인 변경 핸들러
+  tradingMode = "favorites",
   setTradingMode,
-  isActive,
+  topCoinsLimit = 10,
+  setTopCoinsLimit,
+  isActive
 }) => {
-  const [filter, setFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
 
-  // ✅ **안전한 코인 데이터 처리**
-  const availableCoins = useMemo(() => {
-    if (tradingMode === "watchlist") {
-      // watchlistCoins에서 안전하게 데이터 추출
-      return (watchlistCoins || []).map(coin => ({
-        symbol: coin.symbol || coin.market?.replace('KRW-', '') || 'UNKNOWN',
-        name: coin.name || coin.korean_name || coin.symbol || 'Unknown',
-        price: coin.price || coin.currentPrice || 0, // ✅ 기본값 0
-        market: coin.market || `KRW-${coin.symbol}`,
-        isSelected: selectedCoins.includes(coin.symbol || coin.market?.replace('KRW-', ''))
+  // 🎯 실제 coinStore에서 데이터 가져오기
+  const {
+    availableCoins,
+    selectedCoins: storeSelectedCoins, // 🎯 coinStore의 선택된 코인
+    isLoading,
+    isInitialized,
+    error,
+    refreshData,
+    initializeData
+  } = useCoinStore();
+
+  // 🎯 초기 데이터 로드
+  useEffect(() => {
+    if (!isInitialized && !isLoading && !error) {
+      console.log("🚀 CoinsTab에서 coinStore 초기화 요청");
+      initializeData(true);
+    }
+  }, [isInitialized, isLoading, error, initializeData]);
+
+  // 🎯 coinStore 데이터와 favoriteCoins 동기화
+  useEffect(() => {
+    if (isInitialized && storeSelectedCoins.length > 0 && favoriteCoins.length === 0) {
+      console.log("🔄 coinStore selectedCoins를 favoriteCoins로 동기화:", storeSelectedCoins.length);
+      // coinStore의 선택된 코인을 관심코인으로 변환
+      const convertedFavorites = storeSelectedCoins.map(coin => ({
+        symbol: coin.symbol,
+        korean_name: coin.korean_name,
+        english_name: coin.english_name,
+        market: coin.market,
+        current_price: coin.current_price,
+        change_rate: coin.change_rate
+      }));
+      onFavoriteCoinsChange?.(convertedFavorites);
+    }
+  }, [isInitialized, storeSelectedCoins, favoriteCoins, onFavoriteCoinsChange]);
+
+  // 🎯 검색 필터링
+  const filteredCoins = useMemo(() => {
+    if (!availableCoins || availableCoins.length === 0) return [];
+
+    if (!searchTerm.trim()) return availableCoins;
+
+    const searchLower = searchTerm.toLowerCase();
+    return availableCoins.filter(coin =>
+      coin.symbol?.toLowerCase().includes(searchLower) ||
+      coin.korean_name?.toLowerCase().includes(searchLower) ||
+      coin.english_name?.toLowerCase().includes(searchLower)
+    );
+  }, [availableCoins, searchTerm]);
+
+  // 🎯 현재 표시할 코인 목록 결정
+  const displayCoins = useMemo(() => {
+    if (searchTerm.trim()) {
+      // 검색 중이면 필터링된 결과
+      return filteredCoins.map(coin => ({
+        ...coin,
+        isSelected: selectedCoins.includes(coin.symbol),
+        isFavorite: favoriteCoins.some(fav => fav.symbol === coin.symbol)
       }));
     }
 
-    // 상위 코인들 (기본 데이터)
-    return [
-      { symbol: "BTC", name: "Bitcoin", price: 45000000, market: "KRW-BTC" },
-      { symbol: "ETH", name: "Ethereum", price: 3200000, market: "KRW-ETH" },
-      { symbol: "XRP", name: "Ripple", price: 650, market: "KRW-XRP" },
-      { symbol: "ADA", name: "Cardano", price: 520, market: "KRW-ADA" },
-      { symbol: "SOL", name: "Solana", price: 95000, market: "KRW-SOL" },
-      { symbol: "DOT", name: "Polkadot", price: 8500, market: "KRW-DOT" },
-      { symbol: "LINK", name: "Chainlink", price: 18000, market: "KRW-LINK" },
-      { symbol: "MATIC", name: "Polygon", price: 1200, market: "KRW-MATIC" },
-    ].map(coin => ({
-      ...coin,
-      isSelected: selectedCoins.includes(coin.symbol)
-    }));
-  }, [tradingMode, watchlistCoins, selectedCoins]);
+    if (tradingMode === "favorites") {
+      // 🎯 관심 코인 모드 - 실제 업비트 데이터와 병합
+      if (favoriteCoins.length === 0) {
+        return []; // 관심 코인이 정말로 없으면 빈 배열
+      }
 
-  const filteredCoins = useMemo(() => {
-    let coins = availableCoins;
+      return favoriteCoins.map(favCoin => {
+        // 업비트 데이터에서 최신 정보 찾기
+        const upbitData = availableCoins.find(coin => coin.symbol === favCoin.symbol);
+        return {
+          // 업비트 최신 데이터 우선, 없으면 관심코인 데이터 사용
+          ...(upbitData || favCoin),
+          // 관심코인 고유 정보 유지
+          symbol: favCoin.symbol,
+          korean_name: favCoin.korean_name || upbitData?.korean_name,
+          isSelected: selectedCoins.includes(favCoin.symbol),
+          isFavorite: true
+        };
+      }).filter(coin => coin.symbol); // 유효한 코인만
+    } else {
+      // 상위 코인 모드
+      const sortedCoins = [...(availableCoins || [])]
+        .sort((a, b) => {
+          const aScore = a.investment_priority || a.volume_24h || 0;
+          const bScore = b.investment_priority || b.volume_24h || 0;
+          return bScore - aScore;
+        })
+        .slice(0, topCoinsLimit);
 
-    if (searchTerm) {
-      coins = coins.filter(
-        (coin) =>
-          coin.symbol?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          coin.name?.toLowerCase().includes(searchTerm.toLowerCase())
-      );
+      return sortedCoins.map(coin => ({
+        ...coin,
+        isSelected: selectedCoins.includes(coin.symbol),
+        isFavorite: favoriteCoins.some(fav => fav.symbol === coin.symbol)
+      }));
     }
+  }, [
+    searchTerm, filteredCoins, tradingMode, favoriteCoins,
+    availableCoins, topCoinsLimit, selectedCoins
+  ]);
 
-    if (filter === "selected") {
-      coins = coins.filter((coin) => coin.isSelected);
-    } else if (filter === "unselected") {
-      coins = coins.filter((coin) => !coin.isSelected);
+  // 🎯 관심 코인 추가/제거
+  const handleFavoriteToggle = useCallback((coin) => {
+    const isFavorite = favoriteCoins.some(fav => fav.symbol === coin.symbol);
+
+    if (isFavorite) {
+      // 관심 코인에서 제거
+      const newFavorites = favoriteCoins.filter(fav => fav.symbol !== coin.symbol);
+      onFavoriteCoinsChange?.(newFavorites);
+    } else {
+      // 관심 코인에 추가
+      const newFavorite = {
+        symbol: coin.symbol,
+        korean_name: coin.korean_name,
+        english_name: coin.english_name,
+        market: coin.market,
+        current_price: coin.current_price,
+        change_rate: coin.change_rate
+      };
+      onFavoriteCoinsChange?.([...favoriteCoins, newFavorite]);
     }
+  }, [favoriteCoins, onFavoriteCoinsChange]);
 
-    return coins;
-  }, [availableCoins, searchTerm, filter]);
-
-  const handleCoinToggle = (symbol) => {
+  // 🎯 코인 선택/해제
+  const handleCoinToggle = useCallback((coin) => {
     if (isActive) {
       alert("거래 중에는 코인 선택을 변경할 수 없습니다.");
       return;
     }
 
-    if (selectedCoins.includes(symbol)) {
-      onCoinsChange(selectedCoins.filter((s) => s !== symbol));
-    } else {
-      onCoinsChange([...selectedCoins, symbol]);
-    }
-  };
+    const newSelectedCoins = selectedCoins.includes(coin.symbol)
+      ? selectedCoins.filter(s => s !== coin.symbol)
+      : [...selectedCoins, coin.symbol];
 
-  // 관심코인 모드인데 코인이 없는 경우
-  if (tradingMode === "watchlist" && (!watchlistCoins || watchlistCoins.length === 0)) {
-    return (
-      <div className="empty-state text-center py-12">
-        <StarIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-        <h3 className="text-xl font-semibold text-gray-700 mb-2">관심코인이 없습니다</h3>
-        <p className="text-gray-500 mb-6">
-          관심코인 모드에서는 메인 화면에서 코인을 먼저 관심등록해주세요.
-        </p>
-        <button
-          onClick={() => setTradingMode("top")}
-          className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-semibold transition-colors"
-        >
-          상위코인 모드로 전환
-        </button>
-      </div>
-    );
-  }
+    onCoinsChange(newSelectedCoins);
+  }, [isActive, selectedCoins, onCoinsChange]);
+
+  // 🎯 전체 선택/해제
+  const handleSelectAll = useCallback(() => {
+    if (isActive) {
+      alert("거래 중에는 코인 선택을 변경할 수 없습니다.");
+      return;
+    }
+
+    const visibleSymbols = displayCoins.map(coin => coin.symbol);
+    const allSelected = visibleSymbols.every(symbol => selectedCoins.includes(symbol));
+
+    if (allSelected) {
+      const newSelected = selectedCoins.filter(symbol => !visibleSymbols.includes(symbol));
+      onCoinsChange(newSelected);
+    } else {
+      const newSelected = [...new Set([...selectedCoins, ...visibleSymbols])];
+      onCoinsChange(newSelected);
+    }
+  }, [isActive, displayCoins, selectedCoins, onCoinsChange]);
 
   return (
-    <div className="coins-tab space-y-6">
-      {/* 🎮 **모드 선택 및 필터** */}
-      <div className="controls-section bg-white p-4 rounded-lg shadow-sm border">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          {/* 모드 선택 */}
-          <div className="mode-selector">
-            <label className="text-sm font-medium text-gray-700 mb-2 block">거래 모드</label>
-            <div className="flex space-x-2">
-              <button
-                onClick={() => setTradingMode("watchlist")}
-                disabled={isActive}
-                className={`px-4 py-2 rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${tradingMode === "watchlist"
-                    ? "bg-purple-500 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
-              >
-                <StarIcon className="w-4 h-4 inline mr-2" />
-                관심코인
-              </button>
-              <button
-                onClick={() => setTradingMode("top")}
-                disabled={isActive}
-                className={`px-4 py-2 rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${tradingMode === "top"
-                    ? "bg-orange-500 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
-              >
-                <TrendingUpIcon className="w-4 h-4 inline mr-2" />
-                상위코인
-              </button>
-            </div>
+    <div className="space-y-6">
+
+      {/* 🎯 디버깅 정보 표시 (개발 모드에서만) */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm">
+          <div className="font-medium text-yellow-800 mb-1">디버깅 정보:</div>
+          <div className="text-yellow-700">
+            • favoriteCoins: {favoriteCoins.length}개 | selectedCoins: {selectedCoins.length}개 | storeSelectedCoins: {storeSelectedCoins.length}개
+            <br />• availableCoins: {availableCoins?.length || 0}개 | displayCoins: {displayCoins.length}개
+            <br />• 모드: {tradingMode} | 초기화: {isInitialized ? '완료' : '진행중'}
           </div>
+        </div>
+      )}
 
-          {/* 검색 및 필터 */}
-          <div className="search-filter flex items-center space-x-3">
-            <div className="search-box relative">
-              <SearchIcon className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-              <input
-                type="text"
-                placeholder="코인 검색..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
+      {/* 거래 모드 선택 */}
+      <div className="bg-white border border-gray-200 rounded-lg p-4">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-gray-900">거래 대상 선택</h3>
+          <div className="flex items-center space-x-2">
+            <div className={`flex items-center space-x-1 text-sm ${isInitialized ? "text-green-600" : "text-gray-500"
+              }`}>
+              {isInitialized ? <WifiIcon className="w-4 h-4" /> : <WifiOffIcon className="w-4 h-4" />}
+              <span>{isLoading ? "로딩중..." : isInitialized ? `연결됨 (${availableCoins?.length || 0}개)` : "연결안됨"}</span>
             </div>
 
-            <select
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            <button
+              onClick={() => refreshData()}
+              disabled={isLoading}
+              className="flex items-center space-x-2 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
             >
-              <option value="all">전체</option>
-              <option value="selected">선택됨</option>
-              <option value="unselected">미선택</option>
+              <RefreshCwIcon className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+              <span>새로고침</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 모드 선택 버튼 */}
+        <div className="flex items-center space-x-4 mb-4">
+          <button
+            onClick={() => setTradingMode("favorites")}
+            disabled={isActive}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-colors ${tradingMode === "favorites"
+              ? "bg-blue-600 text-white"
+              : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              } ${isActive ? "opacity-50 cursor-not-allowed" : ""}`}
+          >
+            <HeartIcon className="w-4 h-4" />
+            <span>관심 코인</span>
+            <span className="bg-white/20 px-2 py-1 rounded-full text-xs">
+              {favoriteCoins.length}개
+            </span>
+          </button>
+
+          <button
+            onClick={() => setTradingMode("top")}
+            disabled={isActive}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-colors ${tradingMode === "top"
+              ? "bg-blue-600 text-white"
+              : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              } ${isActive ? "opacity-50 cursor-not-allowed" : ""}`}
+          >
+            <TrendingUpIcon className="w-4 h-4" />
+            <span>상위 코인</span>
+            <span className="bg-white/20 px-2 py-1 rounded-full text-xs">
+              {topCoinsLimit}개
+            </span>
+          </button>
+
+          {tradingMode === "top" && (
+            <select
+              value={topCoinsLimit}
+              onChange={(e) => setTopCoinsLimit(parseInt(e.target.value))}
+              disabled={isActive}
+              className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
+            >
+              {[5, 10, 15, 20, 30].map(num => (
+                <option key={num} value={num}>{num}개</option>
+              ))}
             </select>
-          </div>
-        </div>
-      </div>
-
-      {/* 📊 **선택된 코인 요약** */}
-      <div className="summary-section bg-blue-50 border border-blue-200 p-4 rounded-lg">
-        <div className="flex justify-between items-center">
-          <div>
-            <span className="text-blue-800 font-semibold">선택된 코인: </span>
-            <span className="text-blue-600 text-lg font-bold">{selectedCoins.length}개</span>
-          </div>
-          <div className="text-sm text-blue-600">
-            {tradingMode === "watchlist" ? "관심코인 모드" : "상위코인 모드"}
-          </div>
-        </div>
-      </div>
-
-      {/* 🪙 **코인 목록** */}
-      <div className="coins-list bg-white rounded-lg shadow-sm border overflow-hidden">
-        <div className="list-header bg-gray-50 px-6 py-3 border-b">
-          <h3 className="font-semibold text-gray-800">
-            사용 가능한 코인 ({filteredCoins.length}개)
-          </h3>
+          )}
         </div>
 
-        <div className="coins-container max-h-96 overflow-y-auto">
-          {filteredCoins.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              <SearchIcon className="w-8 h-8 mx-auto mb-2 text-gray-400" />
-              <p>검색 결과가 없습니다.</p>
-              {searchTerm && (
-                <button
-                  onClick={() => setSearchTerm("")}
-                  className="text-blue-500 hover:text-blue-700 mt-2"
-                >
-                  검색 초기화
-                </button>
-              )}
+        {/* 모드별 안내 */}
+        <div className="text-sm text-gray-600">
+          {tradingMode === "favorites" ? (
+            <div className="flex items-center space-x-2">
+              <InfoIcon className="w-4 h-4 text-blue-500" />
+              <span>관심 코인 목록에서 거래할 코인을 선택합니다. 하단에서 관심 코인을 추가/삭제할 수 있습니다.</span>
             </div>
           ) : (
-            <ul className="divide-y divide-gray-200">
-              {filteredCoins.map((coin) => (
-                <li
-                  key={coin.symbol}
-                  className={`coin-item px-6 py-4 hover:bg-gray-50 cursor-pointer transition-colors ${isActive ? "opacity-50 cursor-not-allowed" : ""
-                    }`}
-                  onClick={() => !isActive && handleCoinToggle(coin.symbol)}
-                >
-                  <div className="flex items-center justify-between">
-                    {/* 코인 정보 */}
-                    <div className="coin-info flex items-center space-x-4">
-                      <div className={`w-3 h-3 rounded-full ${coin.isSelected ? "bg-green-500" : "bg-gray-300"
-                        }`}></div>
-
-                      <div>
-                        <div className="font-bold text-lg text-gray-900">
-                          {coin.symbol}
-                        </div>
-                        <div className="text-sm text-gray-500 truncate max-w-48">
-                          {coin.name}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* 가격 및 액션 */}
-                    <div className="flex items-center space-x-4">
-                      <div className="price-info text-right">
-                        <div className="text-lg font-semibold text-gray-900 font-mono">
-                          {/* ✅ 안전한 가격 표시 */}
-                          ₩{(coin.price ?? 0).toLocaleString()}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {coin.market || `KRW-${coin.symbol}`}
-                        </div>
-                      </div>
-
-                      <div className="action-button">
-                        {coin.isSelected ? (
-                          <div className="flex items-center text-red-500">
-                            <MinusIcon className="w-5 h-5 mr-1" />
-                            <span className="text-sm font-medium">제거</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center text-green-500">
-                            <PlusIcon className="w-5 h-5 mr-1" />
-                            <span className="text-sm font-medium">추가</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <div className="flex items-center space-x-2">
+              <InfoIcon className="w-4 h-4 text-blue-500" />
+              <span>거래량/시가총액 기준 상위 {topCoinsLimit}개 코인에서 거래 대상을 선택합니다.</span>
+            </div>
           )}
         </div>
       </div>
 
-      {/* 💡 **안내 메시지** */}
-      <div className="guide-section bg-yellow-50 border border-yellow-200 p-4 rounded-lg">
-        <div className="flex items-start space-x-3">
-          <div className="text-yellow-600 mt-0.5">💡</div>
-          <div className="text-yellow-800">
-            <p className="font-medium">코인 선택 가이드</p>
-            <ul className="text-sm mt-2 space-y-1">
-              <li>• 관심코인을 선택하고 실시간 페이퍼 트레이딩을 체험하세요</li>
-              <li>• 거래 중에는 코인 선택을 변경할 수 없습니다</li>
-              <li>• 최대 10개까지 선택 가능합니다</li>
-            </ul>
-          </div>
+      {/* 검색 */}
+      <div className="bg-white border border-gray-200 rounded-lg p-4">
+        <div className="flex items-center space-x-2">
+          <SearchIcon className="w-5 h-5 text-gray-400" />
+          <input
+            type="text"
+            placeholder="코인 이름이나 심볼로 검색... (예: 비트코인, BTC, Bitcoin)"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm("")}
+              className="p-2 text-gray-400 hover:text-gray-600"
+            >
+              <MinusIcon className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
+
+      {/* 코인 목록 */}
+      <div className="bg-white border border-gray-200 rounded-lg">
+        <div className="flex items-center justify-between p-4 border-b border-gray-200">
+          <h3 className="font-semibold text-gray-900">
+            {searchTerm ? `검색 결과 (${displayCoins.length}개)` :
+              tradingMode === "favorites" ? `관심 코인 (${favoriteCoins.length}개)` : `상위 ${topCoinsLimit}개 코인`}
+          </h3>
+
+          <div className="flex items-center space-x-3">
+            <span className="text-sm text-gray-500">{selectedCoins.length}개 선택됨</span>
+            {displayCoins.length > 0 && (
+              <button
+                onClick={handleSelectAll}
+                disabled={isActive}
+                className="flex items-center space-x-1 px-3 py-1 text-sm bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-md transition-colors disabled:opacity-50"
+              >
+                <CheckCircleIcon className="w-4 h-4" />
+                <span>전체선택</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="max-h-96 overflow-y-auto">
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <RefreshCwIcon className="w-6 h-6 text-blue-500 animate-spin mr-2" />
+              <span className="text-gray-500">업비트에서 코인 데이터를 불러오는 중...</span>
+            </div>
+          ) : error ? (
+            <div className="text-center py-12 text-red-500">
+              <AlertCircleIcon className="w-12 h-12 mx-auto mb-4" />
+              <p className="text-lg font-medium">데이터 로드 실패</p>
+              <p className="mt-2">{error}</p>
+              <button
+                onClick={() => initializeData(true)}
+                className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
+                다시 시도
+              </button>
+            </div>
+          ) : displayCoins.length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              {searchTerm ? (
+                <div>
+                  <SearchIcon className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                  <p className="text-lg font-medium">검색 결과가 없습니다</p>
+                  <p className="mt-2">"<strong>{searchTerm}</strong>"에 해당하는 코인을 찾을 수 없습니다</p>
+                </div>
+              ) : tradingMode === "favorites" ? (
+                <div>
+                  <HeartIcon className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                  <p className="text-lg font-medium">관심 코인이 없습니다</p>
+                  <p className="mt-2">하단에서 코인을 검색하여 관심 목록에 추가하세요</p>
+                  {/* 🎯 관심코인 복구 버튼 추가 */}
+                  {storeSelectedCoins.length > 0 && (
+                    <button
+                      onClick={() => {
+                        const converted = storeSelectedCoins.map(coin => ({
+                          symbol: coin.symbol,
+                          korean_name: coin.korean_name,
+                          english_name: coin.english_name,
+                          market: coin.market,
+                          current_price: coin.current_price,
+                          change_rate: coin.change_rate
+                        }));
+                        onFavoriteCoinsChange?.(converted);
+                      }}
+                      className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                    >
+                      저장된 관심코인 {storeSelectedCoins.length}개 복구하기
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <CoinsIcon className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                  <p className="text-lg font-medium">코인 데이터를 불러올 수 없습니다</p>
+                  <p className="mt-2">새로고침 버튼을 클릭해주세요</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-200">
+              {displayCoins.map((coin, index) => (
+                <div key={coin.symbol || coin.market || index} className="p-4 hover:bg-gray-50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center space-x-3">
+
+                        {/* 순위 (상위 코인 모드일 때) */}
+                        {tradingMode === "top" && (
+                          <div className="w-8 h-8 bg-blue-100 text-blue-600 text-sm font-bold rounded-full flex items-center justify-center">
+                            {index + 1}
+                          </div>
+                        )}
+
+                        {/* 코인 정보 */}
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-2">
+                            <span className="font-semibold text-gray-900">{coin.symbol}</span>
+                            <span className="text-sm text-gray-500">{coin.korean_name}</span>
+
+                            {/* 관심 코인 하트 */}
+                            <button
+                              onClick={() => handleFavoriteToggle(coin)}
+                              className={`p-1 rounded transition-colors ${coin.isFavorite
+                                ? "text-red-500 hover:text-red-600"
+                                : "text-gray-300 hover:text-red-500"
+                                }`}
+                            >
+                              <HeartIcon className={`w-4 h-4 ${coin.isFavorite ? 'fill-current' : ''}`} />
+                            </button>
+                          </div>
+
+                          {/* 가격 및 변동률 */}
+                          <div className="flex items-center space-x-2 mt-1">
+                            <span className="text-sm font-medium">
+                              ₩{coin.current_price?.toLocaleString() || '0'}
+                            </span>
+                            {coin.change_rate !== undefined && (
+                              <span className={`text-xs px-2 py-1 rounded-full ${coin.change_rate >= 0
+                                ? "bg-red-100 text-red-600"
+                                : "bg-blue-100 text-blue-600"
+                                }`}>
+                                {coin.change_rate >= 0 ? '+' : ''}{coin.change_rate.toFixed(2)}%
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 선택 버튼 */}
+                    <button
+                      onClick={() => handleCoinToggle(coin)}
+                      disabled={isActive}
+                      className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-all ${coin.isSelected
+                        ? "bg-blue-600 text-white hover:bg-blue-700"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        } ${isActive ? "opacity-50 cursor-not-allowed" : ""}`}
+                    >
+                      {coin.isSelected ? (
+                        <>
+                          <CheckCircleIcon className="w-4 h-4" />
+                          <span>선택됨</span>
+                        </>
+                      ) : (
+                        <>
+                          <PlusIcon className="w-4 h-4" />
+                          <span>선택</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 선택된 코인 요약 */}
+      {selectedCoins.length > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <CheckCircleIcon className="w-5 h-5 text-blue-600" />
+              <span className="font-medium text-blue-900">
+                선택된 코인: {selectedCoins.join(", ")}
+              </span>
+            </div>
+            <span className="text-sm text-blue-700">
+              총 {selectedCoins.length}개 코인이 거래 대상으로 설정됩니다
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

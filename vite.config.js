@@ -26,7 +26,7 @@ export default defineConfig({
           });
           proxy.on("proxyReq", (proxyReq, req, _res) => {
             console.log(
-              `📡 프록시 요청: ${req.method} ${req.url} → ${proxyReq.path}`
+              `📡 프록시 요청: ${req.method} ${proxyReq.path}` //${req.url} →
             );
           });
         },

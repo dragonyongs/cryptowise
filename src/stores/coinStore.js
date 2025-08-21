@@ -3,7 +3,7 @@
 /* -------------------------------------------------------------
  * CryptoWise - 완전한 Coin Store
  * 페이퍼트레이딩 & 실전매매 지원
- * 2025-08-19 개선: localStorage 자동 주입 방지 + 관심코인 보호
+ * 2025-08-21 완전 개선: KRW 필터링 + 중복 호출 방지 + API 최적화
  * ----------------------------------------------------------- */
 
 import { create } from "zustand";
@@ -12,12 +12,12 @@ import { shallow } from "zustand/shallow";
 
 /* ---------- 상수 및 설정 ---------- */
 const API_CONFIG = {
-  UPBIT_RATE_LIMIT: 50, // ✅ 600 → 50으로 대폭 축소 (분당 50회)
-  COINGECKO_RATE_LIMIT: 30, // ✅ 50 → 30으로 축소 (더 안전)
-  CACHE_DURATION: 60_000, // ✅ 30초 → 60초로 늘려서 호출 빈도 줄이기
-  BATCH_SIZE: 50, // ✅ 100 → 50으로 줄여서 과부하 방지
+  UPBIT_RATE_LIMIT: 50, // 분당 50회
+  COINGECKO_RATE_LIMIT: 30, // 분당 30회
+  CACHE_DURATION: 60_000, // 60초
+  BATCH_SIZE: 50, // 배치 크기
   RETRY_ATTEMPTS: 3,
-  RETRY_DELAY: 2_000, // ✅ 1초 → 2초로 늘려서 재시도 간격 확대
+  RETRY_DELAY: 2_000, // 2초
 };
 
 const PLAN_LIMITS = {
@@ -178,64 +178,111 @@ class SmartDataCache {
   }
 }
 
-/* ---------- API 서비스 클래스 ---------- */
+/* ---------- 전역 초기화 상태 관리 ---------- */
+let globalInitializationState = {
+  isInitializing: false,
+  isCompleted: false,
+  promise: null,
+};
+
+/* ---------- API 서비스 클래스 (완전 개선) ---------- */
 class CoinDataService {
-  static upbitLimiter = new RateLimiter(API_CONFIG.UPBIT_RATE_LIMIT, 60_000); // ✅ 600_000ms(10분) → 60_000ms(1분)으로 변경
+  static upbitLimiter = new RateLimiter(API_CONFIG.UPBIT_RATE_LIMIT, 60_000);
   static cache = new SmartDataCache();
 
+  // 🎯 NEW: 진행 중인 요청 추적 (중복 방지)
+  static ongoingRequests = new Map();
+
+  // 🎯 NEW: 중복 요청 방지 래퍼
+  static async deduplicatedRequest(key, requestFn) {
+    // 이미 진행 중인 요청이 있으면 기다림
+    if (this.ongoingRequests.has(key)) {
+      console.log(`🔄 중복 요청 대기 중: ${key}`);
+      return await this.ongoingRequests.get(key);
+    }
+
+    // 새로운 요청 시작
+    const requestPromise = requestFn();
+    this.ongoingRequests.set(key, requestPromise);
+
+    try {
+      const result = await requestPromise;
+      return result;
+    } finally {
+      // 완료 후 제거
+      this.ongoingRequests.delete(key);
+    }
+  }
+
+  // ✅ 마켓 데이터 가져오기 (중복 방지 + 캐시)
   static async fetchUpbitMarkets() {
-    try {
-      // ① 레이트리미터 확인
-      await this.upbitLimiter.canMakeRequest();
+    return await this.deduplicatedRequest("upbit_markets_all", async () => {
+      try {
+        await this.upbitLimiter.canMakeRequest();
 
-      // ② 캐시 확인
-      const cacheKey = "upbit_markets_all";
-      const cached = this.cache.get(cacheKey);
-      if (cached) return cached;
+        const cacheKey = "upbit_markets_all";
+        const cached = this.cache.get(cacheKey);
+        if (cached) {
+          console.log("📋 마켓 데이터 캐시 사용");
+          return cached;
+        }
 
-      // ③ 브라우저-직접 호출 → 프록시로 교체
-      const proxyUrl = "/api/upbit-proxy?endpoint=market/all";
-      const res = await fetch(proxyUrl);
+        console.log("📡 마켓 데이터 API 호출 시작");
+        const proxyUrl = "/api/upbit-proxy?endpoint=market/all";
+        const res = await fetch(proxyUrl);
 
-      if (!res.ok) throw new Error(`Proxy API Error: ${res.status}`);
+        if (!res.ok) throw new Error(`Proxy API Error: ${res.status}`);
 
-      const data = await res.json();
+        const data = await res.json();
+        this.cache.set(cacheKey, data, 1_800_000); // 30분
+        console.log("✅ 마켓 데이터 캐시 저장 완료");
 
-      // ④ 원본 응답 형식 유지(배열) + 30분 캐싱
-      this.cache.set(cacheKey, data, 1_800_000);
-      return data;
-    } catch (err) {
-      console.error("Failed to fetch Upbit markets through proxy:", err);
-      throw new Error("업비트 마켓 데이터 없음"); // 호출 측 로직 그대로 유지
-    }
-  }
-
-  static async fetchPriceData(markets, priority = "medium") {
-    try {
-      await this.upbitLimiter.canMakeRequest();
-      const marketString = markets.join(",");
-      const cacheKey = `prices_${marketString}`;
-      const cached = this.cache.get(cacheKey);
-      if (cached) return cached;
-
-      // ✅ 프록시 URL 사용 (CORS 해결)
-      const proxyUrl = `/api/upbit-proxy?endpoint=ticker&markets=${encodeURIComponent(marketString)}`;
-
-      const response = await fetch(proxyUrl);
-      if (!response.ok) {
-        throw new Error(`Proxy API Error: ${response.status}`);
+        return data;
+      } catch (err) {
+        console.error("❌ 마켓 데이터 호출 실패:", err);
+        throw new Error("업비트 마켓 데이터 없음");
       }
-
-      const priceData = await response.json();
-      const ttl = priority === "high" ? 10_000 : API_CONFIG.CACHE_DURATION;
-      this.cache.set(cacheKey, priceData, ttl);
-      return priceData;
-    } catch (error) {
-      console.error("Failed to fetch price data through proxy:", error);
-      return [];
-    }
+    });
   }
 
+  // ✅ 가격 데이터 가져오기 (중복 방지 + 캐시)
+  static async fetchPriceData(markets, priority = "medium") {
+    const marketString = markets.join(",");
+    const requestKey = `prices_${marketString}`;
+
+    return await this.deduplicatedRequest(requestKey, async () => {
+      try {
+        await this.upbitLimiter.canMakeRequest();
+
+        const cacheKey = `prices_${marketString}`;
+        const cached = this.cache.get(cacheKey);
+        if (cached) {
+          console.log(`📋 가격 데이터 캐시 사용: ${markets.length}개`);
+          return cached;
+        }
+
+        console.log(`📡 가격 데이터 API 호출: ${markets.length}개`);
+        const proxyUrl = `/api/upbit-proxy?endpoint=ticker&markets=${encodeURIComponent(marketString)}`;
+        const response = await fetch(proxyUrl);
+
+        if (!response.ok) {
+          throw new Error(`Proxy API Error: ${response.status}`);
+        }
+
+        const priceData = await response.json();
+        const ttl = priority === "high" ? 10_000 : API_CONFIG.CACHE_DURATION;
+        this.cache.set(cacheKey, priceData, ttl);
+        console.log(`✅ 가격 데이터 캐시 저장: ${priceData.length}개`);
+
+        return priceData;
+      } catch (error) {
+        console.error("❌ 가격 데이터 호출 실패:", error);
+        return [];
+      }
+    });
+  }
+
+  // ✅ 분석 데이터 추가
   static enrichWithAnalysis(coinData) {
     return coinData.map((coin) => {
       const priority = calculateInvestmentPriority(coin);
@@ -450,7 +497,7 @@ export const useCoinStore = create(
           });
         },
 
-        /* === 🎯 핵심 개선: 데이터 초기화 === */
+        /* === 🎯 핵심 개선: 데이터 초기화 (전역 상태 + KRW 필터링) === */
         initializeData: async (forceInit = false) => {
           const state = get();
 
@@ -460,88 +507,142 @@ export const useCoinStore = create(
             return;
           }
 
-          if (state.isInitialized && state.availableCoins.length > 0) return;
-
-          set({ isLoading: true, error: null, loadingProgress: 0 });
-
-          try {
-            console.log("🚀 데이터 초기화 시작 (명시적 호출)");
-
-            // 1단계: 마켓 목록
-            set({ loadingProgress: 25 });
-            const markets = await CoinDataService.fetchUpbitMarkets();
-            if (markets.length === 0)
-              throw new Error("업비트 마켓 데이터 없음");
-
-            // 2단계: 가격 데이터 (배치 처리)
-            set({ loadingProgress: 50 });
-            const allMarkets = markets.map((m) => m.market);
-            let allPrices = [];
-
-            for (let i = 0; i < allMarkets.length; i += API_CONFIG.BATCH_SIZE) {
-              const batch = allMarkets.slice(i, i + API_CONFIG.BATCH_SIZE);
-              const batchPrices = await CoinDataService.fetchPriceData(
-                batch,
-                "medium"
-              );
-              allPrices = allPrices.concat(batchPrices);
-            }
-
-            // 3단계: 데이터 통합
-            set({ loadingProgress: 75 });
-            const combinedData = markets.map((market) => {
-              const price = allPrices.find((p) => p.market === market.market);
-              return {
-                market: market.market,
-                korean_name: market.korean_name,
-                english_name: market.english_name,
-                symbol: market.market.replace("KRW-", ""),
-                current_price: price?.trade_price || 0,
-                change_rate: price?.signed_change_rate
-                  ? price.signed_change_rate * 100
-                  : 0,
-                change_price: price?.signed_change_price || 0,
-                volume_24h: price?.acc_trade_price_24h || 0,
-                last_updated: new Date().toISOString(),
-                analysis: {
-                  score: 0,
-                  recommendation: "ANALYZING",
-                  technical_score: 0,
-                  fundamental_score: 0,
-                  sentiment_score: 0,
-                },
-              };
-            });
-
-            // 4단계: 분석 데이터 추가 및 정렬
-            set({ loadingProgress: 90 });
-            const enrichedData =
-              CoinDataService.enrichWithAnalysis(combinedData);
-            const sortedData = sortCoinsByPriority(
-              enrichedData,
-              SORT_OPTIONS.INVESTMENT_PRIORITY,
-              "desc"
-            );
-
-            set({
-              availableCoins: sortedData,
-              isLoading: false,
-              isInitialized: true,
-              lastUpdated: new Date().toISOString(),
-              loadingProgress: 100,
-              error: null,
-            });
-
-            console.log(`✅ 코인 데이터 초기화 완료: ${sortedData.length}개`);
-          } catch (error) {
-            console.error("데이터 초기화 실패:", error);
-            set({
-              error: error.message,
-              isLoading: false,
-              isInitialized: true,
-              loadingProgress: 0,
-            });
+          // 🎯 전역 초기화 상태 확인
+          if (globalInitializationState.isInitializing) {
+            console.log("⏳ 다른 컴포넌트에서 초기화 진행 중 - 대기");
+            return await globalInitializationState.promise;
           }
+
+          if (
+            globalInitializationState.isCompleted &&
+            state.isInitialized &&
+            state.availableCoins.length > 0
+          ) {
+            console.log("✅ 이미 초기화 완료됨");
+            return;
+          }
+
+          // 🎯 전역 초기화 시작
+          globalInitializationState.isInitializing = true;
+          globalInitializationState.promise = (async () => {
+            set({ isLoading: true, error: null, loadingProgress: 0 });
+
+            try {
+              console.log("🚀 전역 데이터 초기화 시작 (KRW 전용 + 중복 방지)");
+
+              // 1단계: 마켓 목록
+              set({ loadingProgress: 25 });
+              const allMarkets = await CoinDataService.fetchUpbitMarkets();
+
+              if (allMarkets.length === 0) {
+                throw new Error("업비트 마켓 데이터 없음");
+              }
+
+              // 🔥 KRW 마켓만 필터링
+              const krwMarkets = allMarkets.filter((market) => {
+                return (
+                  market.market.startsWith("KRW-") &&
+                  market.market_warning !== "CAUTION"
+                );
+              });
+
+              if (krwMarkets.length === 0) {
+                throw new Error("업비트 원화 마켓 데이터 없음");
+              }
+
+              console.log(
+                `✅ KRW 마켓 ${krwMarkets.length}개 선별 완료 (전체 ${allMarkets.length}개 중)`
+              );
+
+              // 2단계: 가격 데이터 (배치 처리) - KRW만
+              set({ loadingProgress: 50 });
+              const krwMarketCodes = krwMarkets.map((m) => m.market);
+              let allPrices = [];
+
+              for (
+                let i = 0;
+                i < krwMarketCodes.length;
+                i += API_CONFIG.BATCH_SIZE
+              ) {
+                const batch = krwMarketCodes.slice(
+                  i,
+                  i + API_CONFIG.BATCH_SIZE
+                );
+                const batchPrices = await CoinDataService.fetchPriceData(
+                  batch,
+                  "medium"
+                );
+                allPrices = allPrices.concat(batchPrices);
+              }
+
+              // 3단계: 데이터 통합
+              set({ loadingProgress: 75 });
+              const combinedData = krwMarkets.map((market) => {
+                const price = allPrices.find((p) => p.market === market.market);
+                return {
+                  market: market.market,
+                  korean_name: market.korean_name,
+                  english_name: market.english_name,
+                  symbol: market.market.replace("KRW-", ""),
+                  current_price: price?.trade_price || 0,
+                  change_rate: price?.signed_change_rate
+                    ? price.signed_change_rate * 100
+                    : 0,
+                  change_price: price?.signed_change_price || 0,
+                  volume_24h: price?.acc_trade_price_24h || 0,
+                  last_updated: new Date().toISOString(),
+                  analysis: {
+                    score: 0,
+                    recommendation: "ANALYZING",
+                    technical_score: 0,
+                    fundamental_score: 0,
+                    sentiment_score: 0,
+                  },
+                };
+              });
+
+              // 4단계: 분석 데이터 추가 및 정렬
+              set({ loadingProgress: 90 });
+              const enrichedData =
+                CoinDataService.enrichWithAnalysis(combinedData);
+              const sortedData = sortCoinsByPriority(
+                enrichedData,
+                SORT_OPTIONS.INVESTMENT_PRIORITY,
+                "desc"
+              );
+
+              set({
+                availableCoins: sortedData,
+                isLoading: false,
+                isInitialized: true,
+                lastUpdated: new Date().toISOString(),
+                loadingProgress: 100,
+                error: null,
+              });
+
+              // 🎯 전역 상태 업데이트
+              globalInitializationState.isCompleted = true;
+
+              console.log(
+                `✅ 전역 KRW 코인 데이터 초기화 완료: ${sortedData.length}개 (원화 시장 전용)`
+              );
+            } catch (error) {
+              console.error("❌ 전역 데이터 초기화 실패:", error);
+              set({
+                error: error.message,
+                isLoading: false,
+                isInitialized: false,
+                loadingProgress: 0,
+              });
+              throw error;
+            } finally {
+              // 🎯 전역 초기화 상태 리셋
+              globalInitializationState.isInitializing = false;
+              globalInitializationState.promise = null;
+            }
+          })();
+
+          return await globalInitializationState.promise;
         },
 
         /* === 데이터 새로고침 === */
@@ -550,6 +651,7 @@ export const useCoinStore = create(
           if (!state.isInitialized) return get().initializeData(true);
 
           set({ isLoading: true, error: null });
+
           try {
             // 관심 코인 우선 업데이트
             if (state.selectedCoins.length > 0) {
@@ -668,6 +770,7 @@ export const useCoinStore = create(
 
         clearSelectedCoins: () =>
           set({ selectedCoins: [], lastUpdated: new Date().toISOString() }),
+
         setError: (error) => set({ error }),
         clearError: () => set({ error: null }),
         setLoading: (loading) => set({ isLoading: loading }),
@@ -693,22 +796,28 @@ export const useCoinStore = create(
             },
           });
           CoinDataService.cache.clear();
+          // 전역 상태도 리셋
+          globalInitializationState = {
+            isInitializing: false,
+            isCompleted: false,
+            promise: null,
+          };
         },
       }),
       {
         name: "cryptowise-coin-store",
-        version: 5, // ✅ 버전 업데이트
+        version: 6, // 🎯 버전 업데이트
+
         // 🎯 개선된 persist 설정 - 중요 데이터만 저장
         partialize: (state) => ({
           selectedCoins: state.selectedCoins,
           userPlan: state.userPlan,
           maxCoins: state.maxCoins,
-          // ❌ availableCoins 제거 (API 데이터는 저장 안함)
-          // ❌ lastUpdated 제거 (매번 갱신되는 데이터)
           sortBy: state.sortBy,
           sortDirection: state.sortDirection,
           filterOptions: state.filterOptions,
         }),
+
         // 🎯 복원 시 로그
         onRehydrateStorage: () => (state) => {
           if (state) {
@@ -747,13 +856,20 @@ if (process.env.NODE_ENV === "development") {
     }
   );
 
-  // 글로벌 디버깅
+  // 글로벌 디버깅 도구
   window.cryptoStore = {
     getState: () => useCoinStore.getState(),
     setCoins: setSelectedCoinsExternal,
     cache: CoinDataService.cache,
-    // 🎯 개발용 강제 초기화 함수
     forceInit: () => useCoinStore.getState().initializeData(true),
+    resetGlobal: () => {
+      globalInitializationState = {
+        isInitializing: false,
+        isCompleted: false,
+        promise: null,
+      };
+    },
+    getGlobalState: () => globalInitializationState,
   };
 }
 

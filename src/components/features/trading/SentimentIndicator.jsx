@@ -67,9 +67,9 @@ const SentimentIndicator = ({ sentiment, loading }) => {
                 <div className="w-full bg-gray-200 rounded-full h-2">
                     <div
                         className={`h-2 rounded-full transition-all duration-500 ${sentiment.fearGreedIndex < 25 ? 'bg-red-500' :
-                                sentiment.fearGreedIndex < 50 ? 'bg-orange-500' :
-                                    sentiment.fearGreedIndex < 75 ? 'bg-yellow-500' :
-                                        'bg-green-500'
+                            sentiment.fearGreedIndex < 50 ? 'bg-orange-500' :
+                                sentiment.fearGreedIndex < 75 ? 'bg-yellow-500' :
+                                    'bg-green-500'
                             }`}
                         style={{ width: progressWidth }}
                     ></div>
