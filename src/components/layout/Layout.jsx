@@ -3,7 +3,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { useSystemStore } from '../../stores/systemStore';
 import Navbar from './Navbar';
 import MobileNavbar from './MobileNavbar';
-import SystemStatus from '../system/SystemStatus';
+import SystemStatus from '../../features/system/SystemStatus';
 
 export default function Layout({ children }) {
     const { user } = useAuthStore();
@@ -11,8 +11,6 @@ export default function Layout({ children }) {
 
     return (
         <div className="min-h-screen bg-crypto-neutral-50">
-            {/* 시스템 상태 알림 */}
-            <SystemStatus health={systemHealth} connected={isConnected} />
 
             {user && (
                 <>
@@ -30,6 +28,8 @@ export default function Layout({ children }) {
             {/* 메인 콘텐츠 영역 */}
             <main className={`transition-all duration-300 ${user ? 'lg:ml-64 pb-16 lg:pb-0' : ''
                 }`}>
+                {/* 시스템 상태 알림 */}
+                <SystemStatus health={systemHealth} connected={isConnected} />
                 <div className="min-h-screen">
                     {children}
                 </div>

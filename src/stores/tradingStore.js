@@ -177,38 +177,40 @@ export const useTradingStore = create((set, get) => ({
 
   // ✅ 설정 업데이트
   updateTradingSettings: (newSettings) => {
-    const currentSettings = get().tradingSettings;
-    const updatedSettings = { ...currentSettings, ...newSettings };
+    setTimeout(() => {
+      const currentSettings = get().tradingSettings;
+      const updatedSettings = { ...currentSettings, ...newSettings };
 
-    // 설정 검증
-    updatedSettings.tier1Allocation = Math.max(
-      0.3,
-      Math.min(0.7, updatedSettings.tier1Allocation)
-    );
-    updatedSettings.tier2Allocation = Math.max(
-      0.2,
-      Math.min(0.4, updatedSettings.tier2Allocation)
-    );
-    updatedSettings.tier3Allocation = Math.max(
-      0.05,
-      Math.min(0.25, updatedSettings.tier3Allocation)
-    );
+      // 설정 검증
+      updatedSettings.tier1Allocation = Math.max(
+        0.3,
+        Math.min(0.7, updatedSettings.tier1Allocation)
+      );
+      updatedSettings.tier2Allocation = Math.max(
+        0.2,
+        Math.min(0.4, updatedSettings.tier2Allocation)
+      );
+      updatedSettings.tier3Allocation = Math.max(
+        0.05,
+        Math.min(0.25, updatedSettings.tier3Allocation)
+      );
 
-    // 총 배분 비율 검증
-    const totalAllocation =
-      updatedSettings.tier1Allocation +
-      updatedSettings.tier2Allocation +
-      updatedSettings.tier3Allocation;
+      // 총 배분 비율 검증
+      const totalAllocation =
+        updatedSettings.tier1Allocation +
+        updatedSettings.tier2Allocation +
+        updatedSettings.tier3Allocation;
 
-    if (totalAllocation > 1.0) {
-      // 비례 조정
-      const ratio = 0.9 / totalAllocation; // 10% 현금 보유
-      updatedSettings.tier1Allocation *= ratio;
-      updatedSettings.tier2Allocation *= ratio;
-      updatedSettings.tier3Allocation *= ratio;
-    }
+      if (totalAllocation > 1.0) {
+        // 비례 조정
+        const ratio = 0.9 / totalAllocation; // 10% 현금 보유
+        updatedSettings.tier1Allocation *= ratio;
+        updatedSettings.tier2Allocation *= ratio;
+        updatedSettings.tier3Allocation *= ratio;
+      }
 
-    set({ tradingSettings: updatedSettings });
+      set({ tradingSettings: updatedSettings });
+    }, 0);
   },
 
   // ✅ 포트폴리오 리밸런싱 추천

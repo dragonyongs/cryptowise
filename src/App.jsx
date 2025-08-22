@@ -26,7 +26,7 @@ const Settings = React.lazy(() => import("./pages/Settings"));
 const Notifications = React.lazy(() => import("./pages/Notifications"));
 const CoinManagement = React.lazy(() => import("./pages/CoinManagement"));
 const PaperTrading = React.lazy(
-  () => import("./components/features/trading/PaperTrading")
+  () => import("./features/trading/PaperTrading")
 );
 
 // ✅ 수정된 애니메이션 설정

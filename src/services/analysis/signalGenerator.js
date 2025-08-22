@@ -124,6 +124,35 @@ class SignalGenerator {
     }
   }
 
+  getEffectiveSettings() {
+    // usePaperTrading store에서 실제 설정 가져오기
+    const tradingSettings = this.getTradingSettings?.() || {};
+
+    // 저장된 설정이 있으면 우선 적용
+    const effectiveSettings = {
+      minBuyScore: tradingSettings.minBuyScore || (this.isTestMode ? 6.0 : 7.5),
+      minSellScore:
+        tradingSettings.minSellScore || (this.isTestMode ? 4.5 : 6.0),
+      strongBuyScore:
+        tradingSettings.strongBuyScore || (this.isTestMode ? 8.0 : 9.0),
+      strategy: tradingSettings.strategy || "balanced",
+    };
+
+    // aggressive 전략 추가 완화
+    if (effectiveSettings.strategy === "aggressive") {
+      effectiveSettings.minBuyScore = Math.max(
+        effectiveSettings.minBuyScore - 0.5,
+        4.0
+      );
+      effectiveSettings.minSellScore = Math.max(
+        effectiveSettings.minSellScore - 0.5,
+        3.0
+      );
+    }
+
+    return effectiveSettings;
+  }
+
   // 🎯 NEW: 데이터 수신 콜백
   onDataReceived(data) {
     try {
@@ -389,6 +418,13 @@ class SignalGenerator {
 
   // ✅ 신호 유형 결정 (테스트 모드 고려)
   determineSignalTypeWithSettings(marketData, totalScore, settings) {
+    const effectiveSettings = this.getEffectiveSettings();
+    const finalSettings = { ...effectiveSettings, ...settings };
+
+    console.log(
+      `🎯 [${marketData.symbol}] 최종 설정: minBuyScore=${finalSettings.minBuyScore}, strategy=${finalSettings.strategy}`
+    );
+
     const { symbol, rsi } = marketData;
     const coinRules =
       this.coinSpecificRules[symbol] || this.coinSpecificRules["ETH"];
@@ -399,7 +435,7 @@ class SignalGenerator {
     );
 
     // 매수 신호 조건
-    if (totalScore >= settings.minBuyScore) {
+    if (totalScore >= finalSettings.minBuyScore) {
       const rsiLimit = this.isTestMode
         ? settings.rsiOverbought || coinRules.rsiOverbought || 65
         : settings.rsiOverbought || coinRules.rsiOverbought || 70;

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useCoinStore } from "../stores/coinStore";
-import TechnicalIndicatorsPanel from "../components/features/analysis/TechnicalIndicatorsPanel";
+import TechnicalIndicatorsPanel from "../features/analysis/components/TechnicalIndicatorsPanel";
 import { newsService } from "../services/news/newsService";
 import { hybridAnalyzer } from "../services/analysis/hybridAnalyzer";
 import {
