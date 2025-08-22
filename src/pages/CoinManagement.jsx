@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useCoinStore } from '../stores/coinStore';
-import { useRefreshPriceAndAnalysis } from '../hooks/useRefreshPriceAndAnalysis';
+import { useRefreshPriceAndAnalysis } from '../features/analysis/hooks/useRefreshPriceAndAnalysis';
 
 import {
     ArrowLeftIcon,
@@ -17,9 +17,9 @@ import {
 } from '@heroicons/react/24/outline';
 
 // 컴포넌트 임포트
-import CoinSearch from '../components/features/coins/CoinSearch';
-import CoinList from '../components/features/coins/CoinList';
-import SelectedCoins from '../components/features/coins/SelectedCoins';
+import CoinSearch from '../features/coins/CoinSearch';
+import CoinList from '../features/coins/CoinList';
+import SelectedCoins from '../features/coins/SelectedCoins';
 import { LoadingCoinsState, ErrorCoinsState } from '../components/ui/EmptyStates';
 
 export default function CoinManagement() {
