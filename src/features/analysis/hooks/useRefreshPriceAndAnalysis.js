@@ -1,7 +1,7 @@
 // src/hooks/useRefreshPriceAndAnalysis.js - useEffect 제거 버전
 
-import { useCoinStore } from "../stores/coinStore";
-import { useAnalysisStore } from "../components/features/analysis/state/analysisStore";
+import { useCoinStore } from "../../../stores/coinStore";
+import { useAnalysisStore } from "../../../stores/analysisStore";
 import { useRef, useCallback } from "react";
 
 export function useRefreshPriceAndAnalysis() {
