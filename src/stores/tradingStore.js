@@ -7,9 +7,9 @@ import { marketAnalysisService } from "../services/analysis/marketAnalysis.js";
 export const useTradingStore = create((set, get) => ({
   // 기본 상태
   portfolio: {
-    krw: 1840000,
+    krw: 0,
     coins: new Map(),
-    totalValue: 1840000,
+    totalValue: 0,
   },
 
   marketCondition: null,

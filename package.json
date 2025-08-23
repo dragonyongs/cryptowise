@@ -19,6 +19,7 @@
     "axios": "^1.11.0",
     "date-fns": "^4.1.0",
     "framer-motion": "^12.23.12",
+    "lodash-es": "^4.17.21",
     "lucide-react": "^0.539.0",
     "next-auth": "^4.24.11",
     "postcss": "^8.5.6",

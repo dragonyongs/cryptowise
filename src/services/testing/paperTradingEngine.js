@@ -7,14 +7,17 @@ import {
   normalizeMarketCondition,
   getMarketConditionLabel,
 } from "../../utils/marketConditions.js";
+import { PORTFOLIO_CONFIG } from "../../config/portfolioConfig.js";
 
 class PaperTradingEngine {
-  constructor(initialBalance = 1840000) {
-    this.initialBalance = initialBalance;
+  constructor(initialBalance = null, customConfig = null) {
+    this.initialBalance =
+      initialBalance ||
+      PORTFOLIO_CONFIG.getInitialCapital(customConfig?.customCapital);
     this.isActive = true;
 
     this.portfolio = {
-      krw: initialBalance,
+      krw: this.initialBalance,
       coins: new Map(),
       trades: [],
       performance: { totalReturn: 0, winRate: 0, maxDrawdown: 0 },

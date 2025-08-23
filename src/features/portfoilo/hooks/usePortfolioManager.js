@@ -1,12 +1,26 @@
-// src/hooks/usePortfolioManager.js - 데이터 구조 통일
+// src/hooks/usePortfolioManager.js - 중앙화된 설정 사용
+
 import { useState, useCallback, useRef, useEffect } from "react";
 import { paperTradingEngine } from "../../../services/testing/paperTradingEngine.js";
+import { usePortfolioConfig } from "../../../config/portfolioConfig.js";
 
-export const usePortfolioManager = (marketData, addLog) => {
+export const usePortfolioManager = (marketData, addLog, userId = null) => {
+  // 🎯 중앙화된 설정 사용
+  const { config, constants } = usePortfolioConfig(null, userId);
+
+  // ✅ Store와의 동기화만 담당하도록 역할 변경
+  const [isLoading, setIsLoading] = useState(false);
+  const updateInProgress = useRef(false);
+
+  // 초기 자본을 중앙화된 설정에서 가져오기
+  const getInitialBalance = useCallback(() => {
+    return config?.initialCapital || constants.DEFAULT_INITIAL_BALANCE;
+  }, [config, constants]);
+
   const [portfolio, setPortfolio] = useState({
-    totalValue: 1840000,
+    totalValue: getInitialBalance(),
     investedValue: 0,
-    cashValue: 1840000,
+    cashValue: getInitialBalance(),
     totalProfitRate: 0,
     totalProfit: 0,
     cashRatio: 100,
@@ -23,13 +37,12 @@ export const usePortfolioManager = (marketData, addLog) => {
       todayTrades: 0,
     },
     activePositions: 0,
-    maxPositions: 4,
+    maxPositions: constants.DEFAULT_STRATEGY.maxPositions,
     lastUpdated: new Date(),
     mode: { isTestMode: false },
+    initialBalance: getInitialBalance(), // ✅ 중앙화된 초기 자본
   });
 
-  const [isLoading, setIsLoading] = useState(false);
-  const updateInProgress = useRef(false);
   const portfolioCache = useRef(null);
   const [lastUpdateTime, setLastUpdateTime] = useState(null);
   const addLogRef = useRef(addLog);
@@ -39,10 +52,36 @@ export const usePortfolioManager = (marketData, addLog) => {
     addLogRef.current = addLog;
   }, [addLog]);
 
+  // ✅ 설정 변경 시 포트폴리오 초기값 업데이트
+  useEffect(() => {
+    if (config?.initialCapital) {
+      const newInitialBalance = config.initialCapital;
+      setPortfolio((prev) => ({
+        ...prev,
+        totalValue:
+          prev.totalValue === prev.initialBalance
+            ? newInitialBalance
+            : prev.totalValue,
+        cashValue:
+          prev.cashValue === prev.initialBalance
+            ? newInitialBalance
+            : prev.cashValue,
+        initialBalance: newInitialBalance,
+      }));
+
+      // paperTradingEngine의 초기 자본도 업데이트 (엔진이 있다면)
+      if (
+        paperTradingEngine &&
+        typeof paperTradingEngine.updateInitialBalance === "function"
+      ) {
+        paperTradingEngine.updateInitialBalance(newInitialBalance);
+      }
+    }
+  }, [config]);
+
   // ✅ positions 배열을 coins Object로 변환하는 함수
   const convertPositionsToCoins = useCallback((positions) => {
     if (!Array.isArray(positions)) return {};
-
     return positions.reduce((acc, position) => {
       acc[position.symbol] = {
         symbol: position.symbol,
@@ -198,9 +237,11 @@ export const usePortfolioManager = (marketData, addLog) => {
     };
   }, []);
 
-  // ✅ 성과 지표 계산
+  // ✅ 성과 지표 계산 (중앙화된 초기 자본 사용)
   const calculatePerformanceMetrics = useCallback(
-    (tradeHistory, totalValue, initialBalance) => {
+    (tradeHistory, totalValue) => {
+      const initialBalance = getInitialBalance();
+
       if (!Array.isArray(tradeHistory)) {
         return { totalReturn: 0, winRate: 0, maxDrawdown: 0, profitFactor: 0 };
       }
@@ -208,6 +249,7 @@ export const usePortfolioManager = (marketData, addLog) => {
       const executedTrades = tradeHistory.filter(
         (trade) => trade.executed !== false
       );
+
       const sellTrades = executedTrades.filter(
         (trade) => trade.action === "SELL"
       );
@@ -215,6 +257,7 @@ export const usePortfolioManager = (marketData, addLog) => {
       const profitableTrades = sellTrades.filter(
         (trade) => (trade.profitRate || 0) > 0
       );
+
       const winRate =
         sellTrades.length > 0
           ? (profitableTrades.length / sellTrades.length) * 100
@@ -249,6 +292,7 @@ export const usePortfolioManager = (marketData, addLog) => {
       const totalLoss = sellTrades
         .filter((trade) => (trade.profitRate || 0) < 0)
         .reduce((sum, trade) => sum + Math.abs(trade.totalProfit || 0), 0);
+
       const profitFactor =
         totalLoss > 0 ? totalProfit / totalLoss : totalProfit > 0 ? 999 : 0;
 
@@ -257,14 +301,17 @@ export const usePortfolioManager = (marketData, addLog) => {
         winRate: Number(winRate.toFixed(1)),
         maxDrawdown: Number(maxDrawdown.toFixed(2)),
         profitFactor: Number(profitFactor.toFixed(2)),
+        initialBalance,
       };
     },
-    []
+    [getInitialBalance]
   );
 
-  // ✅ 메인 포트폴리오 업데이트 함수 - 데이터 구조 통일
+  // ✅ 메인 포트폴리오 업데이트 함수 - 중앙화된 설정 사용
   const updatePortfolio = useCallback(
     async (forceUpdate = false) => {
+      if (updateInProgress.current) return null;
+
       if (updateInProgress.current) {
         return portfolioCache.current;
       }
@@ -274,12 +321,13 @@ export const usePortfolioManager = (marketData, addLog) => {
         return portfolioCache.current;
       }
 
-      updateInProgress.current = true;
       try {
+        updateInProgress.current = true;
         setIsLoading(true);
 
         // ✅ paperTradingEngine에서 데이터 가져오기
         const rawPortfolioData = paperTradingEngine.getPortfolioSummary();
+
         if (!rawPortfolioData) {
           addLogRef.current?.(
             "⚠️ 페이퍼 트레이딩 엔진이 비활성화되어 포트폴리오 데이터를 가져올 수 없습니다",
@@ -288,13 +336,14 @@ export const usePortfolioManager = (marketData, addLog) => {
           return portfolioCache.current;
         }
 
+        // ✅ 중앙화된 초기 자본 사용
+        const initialBalance = getInitialBalance();
+
         // ✅ 안전한 데이터 구조 보장
         const safePortfolioData = {
-          totalValue:
-            rawPortfolioData.totalValue || paperTradingEngine.initialBalance,
+          totalValue: rawPortfolioData.totalValue || initialBalance,
           investedValue: rawPortfolioData.investedValue || 0,
-          cashValue:
-            rawPortfolioData.cashValue || paperTradingEngine.initialBalance,
+          cashValue: rawPortfolioData.cashValue || initialBalance,
           totalProfitRate: rawPortfolioData.totalProfitRate || 0,
           totalProfit: rawPortfolioData.totalProfit || 0,
           cashRatio: rawPortfolioData.cashRatio || 100,
@@ -306,9 +355,12 @@ export const usePortfolioManager = (marketData, addLog) => {
             ? rawPortfolioData.tradeHistory
             : [],
           activePositions: rawPortfolioData.activePositions || 0,
-          maxPositions: rawPortfolioData.maxPositions || 4,
+          maxPositions:
+            rawPortfolioData.maxPositions ||
+            constants.DEFAULT_STRATEGY.maxPositions,
           lastUpdated: new Date(),
           mode: rawPortfolioData.mode || { isTestMode: false },
+          initialBalance, // ✅ 중앙화된 초기 자본
         };
 
         // ✅ 실시간 가격으로 포지션 업데이트
@@ -323,11 +375,10 @@ export const usePortfolioManager = (marketData, addLog) => {
           safePortfolioData.tradeHistory
         );
 
-        // ✅ 성과 지표 정확히 계산
+        // ✅ 성과 지표 정확히 계산 (중앙화된 초기 자본 사용)
         const performanceMetrics = calculatePerformanceMetrics(
           safePortfolioData.tradeHistory,
-          safePortfolioData.cashValue + totalCurrent,
-          paperTradingEngine.initialBalance
+          safePortfolioData.cashValue + totalCurrent
         );
 
         // ✅ UI에서 기대하는 형태로 coins Object 생성
@@ -345,9 +396,7 @@ export const usePortfolioManager = (marketData, addLog) => {
           totalValue: safePortfolioData.cashValue + totalCurrent,
           totalProfitRate: performanceMetrics.totalReturn / 100,
           totalProfit:
-            safePortfolioData.cashValue +
-            totalCurrent -
-            paperTradingEngine.initialBalance,
+            safePortfolioData.cashValue + totalCurrent - initialBalance,
           cashRatio:
             safePortfolioData.cashValue + totalCurrent > 0
               ? (safePortfolioData.cashValue /
@@ -368,6 +417,7 @@ export const usePortfolioManager = (marketData, addLog) => {
             realTimePositions: updatedPositions.filter((p) => p.isUpdated)
               .length,
           },
+          initialBalance, // ✅ 중앙화된 초기 자본 유지
         };
 
         // ✅ 변경사항이 있을 때만 상태 업데이트
@@ -385,7 +435,8 @@ export const usePortfolioManager = (marketData, addLog) => {
               `코인오브젝트 ${Object.keys(finalPortfolioData.coins).length}개, ` +
               `거래내역 ${finalPortfolioData.trades.length}개, ` +
               `수익률 ${performanceMetrics.totalReturn}%, ` +
-              `거래 ${accurateTradingStats.executedTrades}/${accurateTradingStats.totalTrades}개`,
+              `거래 ${accurateTradingStats.executedTrades}/${accurateTradingStats.totalTrades}개, ` +
+              `초기자본 ₩${initialBalance.toLocaleString()}`,
             forceUpdate ? "success" : "info"
           );
 
@@ -399,6 +450,7 @@ export const usePortfolioManager = (marketData, addLog) => {
               tradeHistory: finalPortfolioData.tradeHistory.length,
               performance: performanceMetrics,
               realTimeData: finalPortfolioData.updateInfo.realTimePositions,
+              initialBalance,
             });
           }
         } else if (forceUpdate) {
@@ -436,6 +488,8 @@ export const usePortfolioManager = (marketData, addLog) => {
       convertPositionsToCoins,
       marketData,
       portfolio,
+      getInitialBalance,
+      constants,
     ]
   );
 
@@ -450,12 +504,14 @@ export const usePortfolioManager = (marketData, addLog) => {
     return () => clearInterval(autoUpdateInterval);
   }, [updatePortfolio]);
 
-  // ✅ 포트폴리오 리셋
+  // ✅ 포트폴리오 리셋 (중앙화된 초기 자본 사용)
   const resetPortfolio = useCallback(() => {
+    const initialBalance = getInitialBalance();
+
     const initialPortfolio = {
-      totalValue: paperTradingEngine.initialBalance,
+      totalValue: initialBalance,
       investedValue: 0,
-      cashValue: paperTradingEngine.initialBalance,
+      cashValue: initialBalance,
       totalProfitRate: 0,
       totalProfit: 0,
       cashRatio: 100,
@@ -478,16 +534,20 @@ export const usePortfolioManager = (marketData, addLog) => {
         todayTrades: 0,
       },
       activePositions: 0,
-      maxPositions: 4,
+      maxPositions: constants.DEFAULT_STRATEGY.maxPositions,
       lastUpdated: new Date(),
       mode: { isTestMode: false },
+      initialBalance, // ✅ 중앙화된 초기 자본
     };
 
     setPortfolio(initialPortfolio);
     portfolioCache.current = initialPortfolio;
     setLastUpdateTime(null);
-    addLogRef.current?.("🔄 포트폴리오 초기화 완료", "info");
-  }, []);
+    addLogRef.current?.(
+      `🔄 포트폴리오 초기화 완료 (초기자본: ₩${initialBalance.toLocaleString()})`,
+      "info"
+    );
+  }, [getInitialBalance, constants]);
 
   return {
     portfolio,
@@ -497,6 +557,9 @@ export const usePortfolioManager = (marketData, addLog) => {
     refreshPortfolio: () => updatePortfolio(true),
     getPortfolioSummary: () => portfolioCache.current || portfolio,
     isUpToDate: () => lastUpdateTime && Date.now() - lastUpdateTime < 10000,
+    config, // ✅ 중앙화된 설정 노출
+    constants, // ✅ 상수 노출
+    getInitialBalance, // ✅ 초기 자본 조회 함수 노출
   };
 };
 
