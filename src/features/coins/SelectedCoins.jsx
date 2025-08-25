@@ -2,7 +2,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { StarIcon, TrashIcon, ArrowTrendingUpIcon, ArrowTrendingDownIcon } from '@heroicons/react/24/outline';
-import { useCoinStore } from '../../../stores/coinStore';
+import { useCoinStore } from '../../stores/coinStore';
 
 const SelectedCoins = ({ onCoinClick, onAnalyzeClick }) => {
     const { selectedCoins, removeCoin } = useCoinStore();
@@ -62,7 +62,7 @@ const SelectedCoins = ({ onCoinClick, onAnalyzeClick }) => {
                 )}
             </div>
 
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1">
                 <AnimatePresence>
                     {selectedCoins.map((coin) => (
                         <motion.div
@@ -130,13 +130,13 @@ const SelectedCoins = ({ onCoinClick, onAnalyzeClick }) => {
                                     <span className="text-sm text-crypto-neutral-600">AI 점수</span>
                                     <div className="flex items-center space-x-2">
                                         <span className={`font-medium ${(coin.analysis?.score || 0) >= 8 ? 'text-crypto-success-600' :
-                                                (coin.analysis?.score || 0) >= 6 ? 'text-crypto-warning-600' : 'text-crypto-neutral-600'
+                                            (coin.analysis?.score || 0) >= 6 ? 'text-crypto-warning-600' : 'text-crypto-neutral-600'
                                             }`}>
                                             {(coin.analysis?.score || 0).toFixed(1)}/10
                                         </span>
                                         <span className={`px-2 py-1 rounded-full text-xs font-medium ${coin.analysis?.recommendation === 'STRONG_BUY' ? 'bg-crypto-success-100 text-crypto-success-700' :
-                                                coin.analysis?.recommendation === 'BUY' ? 'bg-crypto-primary-100 text-crypto-primary-700' :
-                                                    'bg-crypto-neutral-100 text-crypto-neutral-700'
+                                            coin.analysis?.recommendation === 'BUY' ? 'bg-crypto-primary-100 text-crypto-primary-700' :
+                                                'bg-crypto-neutral-100 text-crypto-neutral-700'
                                             }`}>
                                             {coin.analysis?.recommendation === 'STRONG_BUY' ? '강매수' :
                                                 coin.analysis?.recommendation === 'BUY' ? '매수' :

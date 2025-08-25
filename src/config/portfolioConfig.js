@@ -5,7 +5,7 @@ import { useState, useCallback, useEffect } from "react";
 // 🎯 중앙화된 포트폴리오 상수 (API 준비)
 export const PORTFOLIO_CONSTANTS = {
   // 기본 자본 설정 (추후 API로 교체)
-  DEFAULT_INITIAL_BALANCE: 1840000, // 하드코딩 제거를 위한 중앙화
+  DEFAULT_INITIAL_BALANCE: 1840001, // 하드코딩 제거를 위한 중앙화
   BACKUP_INITIAL_BALANCE: 2000000, // 백업용
 
   // 환경별 커스텀 자본 설정
