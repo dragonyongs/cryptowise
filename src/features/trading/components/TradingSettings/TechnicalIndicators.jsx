@@ -3,7 +3,7 @@ import React, { useCallback } from "react";
 import { BarChart3Icon, ToggleLeftIcon, ToggleRightIcon } from "lucide-react";
 import NumberInput from "../common/NumberInput";
 import ValidationMessage from "../common/ValidationMessage";
-import { INDICATOR_NAMES } from "../../constants/tradingDefaults";
+import { TRADING_DEFAULTS, INDICATOR_NAMES } from "../../constants/tradingDefaults";
 
 const TechnicalIndicators = React.memo(
   ({
@@ -15,7 +15,9 @@ const TechnicalIndicators = React.memo(
   }) => {
     const handleParameterChange = useCallback(
       (indicatorKey, parameter, value) => {
-        onIndicatorChange(indicatorKey, parameter, value);
+        // 🔥 NaN 값 검증 추가
+        const validValue = isNaN(value) || value === null || value === undefined ? 0 : Number(value);
+        onIndicatorChange(indicatorKey, parameter, validValue);
       },
       [onIndicatorChange]
     );
@@ -23,20 +25,20 @@ const TechnicalIndicators = React.memo(
     const indicatorComponents = {
       RSI: ({ config, onChange, error }) => (
         <div className="space-y-4">
-          <NumberInput
-            label="기간"
-            value={config.period}
-            onChange={(value) => onChange("period", value)}
-            min={5}
-            max={50}
-            step={1}
-            unit="일"
-            error={error?.period}
-          />
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <NumberInput
-              label="과매도"
-              value={config.oversold}
+              label="RSI 기간"
+              value={config.period ?? TRADING_DEFAULTS.TECHNICAL_INDICATORS.RSI.period}
+              onChange={(value) => onChange("period", value)}
+              min={5}
+              max={50}
+              step={1}
+              unit="일"
+              error={error?.period}
+            />
+            <NumberInput
+              label="과매도 기준"
+              value={config.oversold ?? TRADING_DEFAULTS.TECHNICAL_INDICATORS.RSI.oversold}
               onChange={(value) => onChange("oversold", value)}
               min={10}
               max={40}
@@ -45,8 +47,8 @@ const TechnicalIndicators = React.memo(
               error={error?.oversold}
             />
             <NumberInput
-              label="과매수"
-              value={config.overbought}
+              label="과매수 기준"
+              value={config.overbought ?? TRADING_DEFAULTS.TECHNICAL_INDICATORS.RSI.overbought}
               onChange={(value) => onChange("overbought", value)}
               min={60}
               max={90}
@@ -55,185 +57,189 @@ const TechnicalIndicators = React.memo(
               error={error?.overbought}
             />
           </div>
+          {error?.general && (
+            <ValidationMessage type="error" message={error.general} />
+          )}
         </div>
       ),
 
       MACD: ({ config, onChange, error }) => (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <NumberInput
-              label="빠른선"
-              value={config.fast}
+              label="빠른 EMA"
+              value={config.fast ?? config.fastPeriod ?? TRADING_DEFAULTS.TECHNICAL_INDICATORS.MACD.fast}
               onChange={(value) => onChange("fast", value)}
               min={5}
-              max={30}
+              max={20}
               step={1}
               unit="일"
               error={error?.fast}
             />
             <NumberInput
-              label="느린선"
-              value={config.slow}
+              label="느린 EMA"
+              value={config.slow ?? config.slowPeriod ?? TRADING_DEFAULTS.TECHNICAL_INDICATORS.MACD.slow}
               onChange={(value) => onChange("slow", value)}
-              min={15}
+              min={20}
               max={50}
               step={1}
               unit="일"
               error={error?.slow}
             />
+            <NumberInput
+              label="신호선 EMA"
+              value={config.signal ?? config.signalPeriod ?? TRADING_DEFAULTS.TECHNICAL_INDICATORS.MACD.signal}
+              onChange={(value) => onChange("signal", value)}
+              min={5}
+              max={15}
+              step={1}
+              unit="일"
+              error={error?.signal}
+            />
           </div>
-          <NumberInput
-            label="시그널선"
-            value={config.signal}
-            onChange={(value) => onChange("signal", value)}
-            min={5}
-            max={20}
-            step={1}
-            unit="일"
-            error={error?.signal}
-          />
+          {error?.general && (
+            <ValidationMessage type="error" message={error.general} />
+          )}
         </div>
       ),
 
       BOLLINGER_BANDS: ({ config, onChange, error }) => (
         <div className="space-y-4">
-          <NumberInput
-            label="기간"
-            value={config.period}
-            onChange={(value) => onChange("period", value)}
-            min={10}
-            max={50}
-            step={1}
-            unit="일"
-            error={error?.period}
-          />
-          <NumberInput
-            label="표준편차"
-            value={config.standardDeviation}
-            onChange={(value) => onChange("standardDeviation", value)}
-            min={1}
-            max={3}
-            step={0.1}
-            unit=""
-            error={error?.standardDeviation}
-          />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <NumberInput
+              label="기간"
+              value={config.period ?? TRADING_DEFAULTS.TECHNICAL_INDICATORS.BOLLINGER_BANDS.period}
+              onChange={(value) => onChange("period", value)}
+              min={10}
+              max={50}
+              step={1}
+              unit="일"
+              error={error?.period}
+            />
+            <NumberInput
+              label="표준편차 배수"
+              value={config.standardDeviation ?? config.multiplier ?? TRADING_DEFAULTS.TECHNICAL_INDICATORS.BOLLINGER_BANDS.standardDeviation}
+              onChange={(value) => onChange("standardDeviation", value)}
+              min={1}
+              max={3}
+              step={0.1}
+              unit="배"
+              error={error?.standardDeviation}
+            />
+          </div>
+          {error?.general && (
+            <ValidationMessage type="error" message={error.general} />
+          )}
         </div>
       ),
 
       MOVING_AVERAGE: ({ config, onChange, error }) => (
-        <div className="grid grid-cols-2 gap-4">
-          <NumberInput
-            label="단기 이평선"
-            value={config.shortPeriod}
-            onChange={(value) => onChange("shortPeriod", value)}
-            min={5}
-            max={30}
-            step={1}
-            unit="일"
-            error={error?.shortPeriod}
-          />
-          <NumberInput
-            label="장기 이평선"
-            value={config.longPeriod}
-            onChange={(value) => onChange("longPeriod", value)}
-            min={30}
-            max={100}
-            step={1}
-            unit="일"
-            error={error?.longPeriod}
-          />
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <NumberInput
+              label="단기 이평선"
+              value={config.shortPeriod ?? TRADING_DEFAULTS.TECHNICAL_INDICATORS.MOVING_AVERAGE.shortPeriod}
+              onChange={(value) => onChange("shortPeriod", value)}
+              min={5}
+              max={50}
+              step={1}
+              unit="일"
+              error={error?.shortPeriod}
+            />
+            <NumberInput
+              label="장기 이평선"
+              value={config.longPeriod ?? TRADING_DEFAULTS.TECHNICAL_INDICATORS.MOVING_AVERAGE.longPeriod}
+              onChange={(value) => onChange("longPeriod", value)}
+              min={20}
+              max={200}
+              step={1}
+              unit="일"
+              error={error?.longPeriod}
+            />
+          </div>
+          {error?.general && (
+            <ValidationMessage type="error" message={error.general} />
+          )}
+        </div>
+      ),
+
+      // 🔥 기존에 있던 Volume은 유지
+      Volume: ({ config, onChange, error }) => (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <NumberInput
+              label="거래량 임계값"
+              value={config.threshold ?? 1.5}
+              onChange={(value) => onChange("threshold", value)}
+              min={1}
+              max={5}
+              step={0.1}
+              unit="배"
+              error={error?.threshold}
+            />
+          </div>
+          {error?.general && (
+            <ValidationMessage type="error" message={error.general} />
+          )}
         </div>
       ),
     };
 
     return (
-      <div
-        className={`space-y-6 p-6 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm ${className}`}
-      >
-        <div className="flex items-center space-x-3">
-          <BarChart3Icon size={20} className="text-blue-500" />
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-            기술적 지표 설정
-          </h3>
+      <div className={`space-y-6 ${className}`}>
+        <div className="text-sm text-gray-600 mb-4">
+          활성화된 지표들의 신호가 일치할 때만 매매를 실행합니다.
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {Object.entries(indicators).map(([key, config]) => {
-            const IndicatorComponent = indicatorComponents[key];
-            const indicatorError = errors[key] || {};
+        {Object.entries(indicators).map(([indicatorKey, config]) => {
+          const IndicatorComponent = indicatorComponents[indicatorKey];
 
-            return (
-              <div
-                key={key}
-                className={`p-4 border rounded-lg transition-all duration-200 ${
-                  config.enabled
-                    ? "bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-700"
-                    : "bg-gray-50 border-gray-200 dark:bg-gray-700/50 dark:border-gray-600"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <span
-                    className={`font-medium ${
-                      config.enabled
-                        ? "text-blue-900 dark:text-blue-100"
-                        : "text-gray-600 dark:text-gray-400"
-                    }`}
-                  >
-                    {INDICATOR_NAMES[key]}
-                  </span>
+          // 🔥 컴포넌트 존재 여부 확인
+          if (!IndicatorComponent) {
+            console.warn(`Unknown indicator: ${indicatorKey}`);
+            return null;
+          }
 
-                  <button
-                    onClick={() => onToggleIndicator(key)}
-                    className={`p-1 rounded-md transition-colors hover:bg-white dark:hover:bg-gray-600 ${
-                      config.enabled ? "text-blue-600" : "text-gray-400"
-                    }`}
-                    aria-label={`${INDICATOR_NAMES[key]} ${config.enabled ? "비활성화" : "활성화"}`}
-                  >
-                    {config.enabled ? (
-                      <ToggleRightIcon size={20} />
-                    ) : (
-                      <ToggleLeftIcon size={20} />
-                    )}
-                  </button>
+          return (
+            <div key={indicatorKey} className="border border-gray-200 rounded-lg p-4">
+              {/* 지표 헤더 */}
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-3">
+                  <BarChart3Icon className="w-5 h-5 text-gray-500" />
+                  <h3 className="font-medium text-gray-900">
+                    {INDICATOR_NAMES[indicatorKey] || indicatorKey}
+                  </h3>
                 </div>
 
-                {config.enabled && (
-                  <div className="space-y-4">
-                    <IndicatorComponent
-                      config={config}
-                      onChange={(param, value) =>
-                        handleParameterChange(key, param, value)
-                      }
-                      error={indicatorError}
-                    />
-
-                    <NumberInput
-                      label="가중치"
-                      value={config.weight * 100}
-                      onChange={(value) =>
-                        handleParameterChange(key, "weight", value / 100)
-                      }
-                      min={0}
-                      max={100}
-                      step={1}
-                      unit="%"
-                      error={indicatorError.weight}
-                    />
-                  </div>
-                )}
-
-                {Object.keys(indicatorError).length > 0 && (
-                  <div className="mt-3">
-                    <ValidationMessage
-                      type="error"
-                      message={Object.values(indicatorError)[0]}
-                    />
-                  </div>
-                )}
+                {/* 토글 스위치 */}
+                <button
+                  onClick={() => onToggleIndicator(indicatorKey)}
+                  className={`p-2 rounded-lg transition-all ${config.enabled
+                      ? "text-blue-600 bg-blue-100"
+                      : "text-gray-400 bg-gray-100"
+                    }`}
+                >
+                  {config.enabled ? (
+                    <ToggleRightIcon className="w-6 h-6" />
+                  ) : (
+                    <ToggleLeftIcon className="w-6 h-6" />
+                  )}
+                </button>
               </div>
-            );
-          })}
-        </div>
+
+              {/* 지표 설정 */}
+              {config.enabled && (
+                <IndicatorComponent
+                  config={config}
+                  onChange={(parameter, value) =>
+                    handleParameterChange(indicatorKey, parameter, value)
+                  }
+                  error={errors[indicatorKey]}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
     );
   }

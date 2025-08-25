@@ -1,50 +1,28 @@
-// src/features/trading/components/TradingSettings/index.jsx
-import React, {
-  useState,
-  useEffect,
-  useMemo,
-  useCallback,
-  useRef,
-} from "react";
+// src/features/trading/components/TradingSettings/index.jsx - 완전한 버전
+
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
-  ChevronDownIcon,
-  ChevronUpIcon,
-  CogIcon,
-  PieChartIcon,
-  ClockIcon,
-  TrendingUpIcon,
-  TrendingDownIcon,
-  BarChart3Icon,
-  SaveIcon,
-  RefreshCwIcon,
-  AlertTriangleIcon,
-  InfoIcon,
-  TestTubeIcon,
-  SparklesIcon,
-  ShieldCheckIcon,
-  ZapIcon,
-  XIcon,
-  SlidersIcon,
-  DollarSignIcon,
-  PercentIcon,
-  TimerIcon,
+  ChevronDownIcon, ChevronUpIcon, CogIcon, PieChartIcon, ClockIcon,
+  TrendingUpIcon, TrendingDownIcon, BarChart3Icon, SaveIcon, RefreshCwIcon,
+  AlertTriangleIcon, InfoIcon, TestTubeIcon, SparklesIcon, ShieldCheckIcon,
+  ZapIcon, XIcon, SlidersIcon, DollarSignIcon, PercentIcon, TimerIcon,
 } from "lucide-react";
+import {
+  CheckCircleIcon
+} from '@heroicons/react/24/outline';
+// 🔥 개선된 훅 사용
+import { useTradingSettings } from "../../hooks/useTradingSettings";
+import { usePortfolioStore } from "../../../../stores/portfolioStore";
+import { TRADING_DEFAULTS } from "../../constants/tradingDefaults";
 
-// 🔥 기존 TradingSettings_v1.jsx의 유틸 함수들 그대로 복사
-const normalizeAllocations = (allocations) => {
-  const { cash, t1, t2, t3 } = allocations;
-  const total = cash + t1 + t2 + t3;
-  if (Math.abs(total - 1) > 0.001) {
-    return {
-      cash: cash / total,
-      t1: t1 / total,
-      t2: t2 / total,
-      t3: t3 / total,
-    };
-  }
-  return { cash, t1, t2, t3 };
-};
+// 컴포넌트 import (기존 유지)
+import NumberInput from "../common/NumberInput";
+import PortfolioAllocation from "./PortfolioAllocation";
+import TechnicalIndicators from "./TechnicalIndicators";
+import RiskManagement from "./RiskManagement";
+import AdvancedSettings from "./AdvancedSettings";
 
+// 🔥 기존 유틸리티 함수들 완전히 유지
 const adjustOtherAllocations = (changedKey, newValue, currentAllocations) => {
   const keys = ["cash", "t1", "t2", "t3"];
   const otherKeys = keys.filter((key) => key !== changedKey);
@@ -71,451 +49,380 @@ const adjustOtherAllocations = (changedKey, newValue, currentAllocations) => {
   return result;
 };
 
-// 🔥 기존 NumberInput 컴포넌트 그대로 복사
-const NumberInput = React.memo(
-  ({
-    label,
-    value,
-    onChange,
-    min,
-    max,
-    step = 0.1,
-    unit = "%",
-    placeholder,
-    icon: Icon = null,
-    disabled = false,
-  }) => {
-    const [localValue, setLocalValue] = useState(value);
-    const timeoutRef = useRef();
+const normalizeAllocations = (allocations) => {
+  const { cash, t1, t2, t3 } = allocations;
+  const total = cash + t1 + t2 + t3;
 
-    const handleChange = useCallback(
-      (e) => {
-        const newValue = parseFloat(e.target.value) || 0;
-        setLocalValue(newValue);
-
-        if (timeoutRef.current) {
-          clearTimeout(timeoutRef.current);
-        }
-
-        timeoutRef.current = setTimeout(() => {
-          onChange(newValue);
-        }, 300);
-      },
-      [onChange]
-    );
-
-    useEffect(() => {
-      setLocalValue(value);
-    }, [value]);
-
-    useEffect(() => {
-      return () => {
-        if (timeoutRef.current) {
-          clearTimeout(timeoutRef.current);
-        }
-      };
-    }, []);
-
-    return (
-      <div className="space-y-2">
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-          <div className="flex items-center space-x-2">
-            {Icon && <Icon size={16} />}
-            <span>{label}</span>
-          </div>
-        </label>
-        <div className="relative">
-          <input
-            type="number"
-            min={min}
-            max={max}
-            step={step}
-            value={localValue}
-            placeholder={placeholder}
-            disabled={disabled}
-            onChange={handleChange}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-600 dark:text-white"
-          />
-          {unit && (
-            <span className="absolute inset-y-0 right-3 flex items-center text-gray-500 text-sm">
-              {unit}
-            </span>
-          )}
-        </div>
-      </div>
-    );
+  if (Math.abs(total - 1) > 0.001) {
+    return {
+      cash: cash / total,
+      t1: t1 / total,
+      t2: t2 / total,
+      t3: t3 / total,
+    };
   }
-);
-
-// 🔥 간단한 Tabs 컴포넌트
-const Tabs = ({ children }) => {
-  const [activeTab, setActiveTab] = useState(0);
-
-  return (
-    <div>
-      <div className="flex border-b border-gray-200 dark:border-gray-700 mb-6">
-        {React.Children.map(children, (child, index) => (
-          <button
-            key={index}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              index === activeTab
-                ? "border-blue-500 text-blue-600 dark:text-blue-400"
-                : "border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200"
-            }`}
-            onClick={() => setActiveTab(index)}
-          >
-            {child.props.label}
-          </button>
-        ))}
-      </div>
-
-      <div>
-        {React.Children.map(children, (child, index) => (
-          <div key={index} className={index === activeTab ? "block" : "hidden"}>
-            {child.props.children}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  return { cash, t1, t2, t3 };
 };
 
-const Tab = ({ children }) => children;
-
 // 🔥 메인 TradingSettings 컴포넌트
-const TradingSettings = ({
-  environment = "paper",
-  initialCapital = 1840000,
-  isActive = false,
-  onSave,
-  onClose,
-  className = "",
-}) => {
-  // 🔥 기존 TradingSettings_v1.jsx의 state 그대로 복사
-  const [allocations, setAllocations] = useState({
-    cash: 0.4,
-    t1: 0.42,
-    t2: 0.15,
-    t3: 0.03,
-  });
+const TradingSettings = ({ isActive = false, onClose }) => {
+  // 상태 관리 (기존 유지)
+  const [activeTab, setActiveTab] = useState("portfolio");
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [errors, setErrors] = useState({});
 
-  const [activeIndicators, setActiveIndicators] = useState(["RSI", "MACD"]);
-  const [hasChanges, setHasChanges] = useState(false);
+  // 🔥 개선된 훅 사용 (모든 기존 기능 + 새 기능)
+  const {
+    settings,
+    isDirty,
+    isLoading,
+    tradingMode,
+    allocationAmounts,
+    activeIndicators,
+    updateAllocation,
+    updateIndicator,
+    updateRiskManagement,
+    updateSettings,
+    resetSettings,
+    saveSettings,
+    toggleTradingMode,
+    toggleIndicator,
+  } = useTradingSettings();
 
-  // 🔥 기존 핸들러 함수들 그대로 복사
-  const handleAllocationChange = useCallback(
-    (key, value) => {
-      const normalizedValue = Math.max(0, Math.min(1, value / 100));
-      const newAllocations = adjustOtherAllocations(
-        key,
-        normalizedValue,
-        allocations
-      );
-      setAllocations(newAllocations);
-      setHasChanges(true);
+  // 🔥 포트폴리오 스토어에서 실제 총액 가져오기
+  const { portfolioData } = usePortfolioStore();
+
+  // 탭 설정 (기존 유지)
+  const tabs = [
+    {
+      id: "portfolio",
+      label: "포트폴리오 할당",
+      icon: PieChartIcon,
+      description: "자산 배분과 투자 전략을 설정합니다"
     },
-    [allocations]
-  );
-
-  const handleSave = useCallback(() => {
-    const settings = {
-      allocations,
-      activeIndicators,
-      environment,
-      initialCapital,
-      lastSaved: new Date().toISOString(),
-    };
-
-    if (onSave) {
-      onSave(settings);
+    {
+      id: "indicators",
+      label: "기술적 지표",
+      icon: BarChart3Icon,
+      description: "매매 신호 생성을 위한 지표를 설정합니다"
+    },
+    {
+      id: "risk",
+      label: "리스크 관리",
+      icon: ShieldCheckIcon,
+      description: "손실 제한과 수익 실현 전략을 설정합니다"
+    },
+    {
+      id: "advanced",
+      label: "고급 설정",
+      icon: SlidersIcon,
+      description: "세부적인 거래 조건을 설정합니다"
     }
+  ];
 
-    setHasChanges(false);
-    console.log("Settings saved:", settings);
-  }, [allocations, activeIndicators, environment, initialCapital, onSave]);
+  // 🔥 실제 저장 핸들러 (기존 시뮬레이션에서 실제 저장으로 변경)
+  const handleSave = useCallback(async () => {
+    setErrors({});
 
+    try {
+      const result = await saveSettings();
+      if (result.success) {
+        setShowSuccess(true);
+        setTimeout(() => setShowSuccess(false), 3000);
+
+        // 성공 알림
+        if (window.addLog) {
+          window.addLog("✅ 트레이딩 설정이 성공적으로 저장되었습니다", "success");
+        }
+      } else {
+        setErrors({ general: `저장 실패: ${result.error}` });
+      }
+    } catch (error) {
+      console.error("Save failed:", error);
+      setErrors({ general: `저장 중 오류: ${error.message}` });
+    }
+  }, [saveSettings]);
+
+  // 🔥 초기화 핸들러 (기존 로직 개선)
   const handleReset = useCallback(() => {
-    setAllocations({
-      cash: 0.4,
-      t1: 0.42,
-      t2: 0.15,
-      t3: 0.03,
-    });
-    setHasChanges(false);
-  }, []);
+    if (window.confirm("모든 설정을 기본값으로 초기화하시겠습니까?")) {
+      resetSettings();
+      setErrors({});
 
-  // 🔥 기존 계산 로직 그대로 복사
-  const portfolioValues = useMemo(() => {
-    return {
-      cash: Math.round(allocations.cash * initialCapital),
-      t1: Math.round(allocations.t1 * initialCapital),
-      t2: Math.round(allocations.t2 * initialCapital),
-      t3: Math.round(allocations.t3 * initialCapital),
+      if (window.addLog) {
+        window.addLog("🔄 트레이딩 설정이 기본값으로 초기화되었습니다", "info");
+      }
+    }
+  }, [resetSettings]);
+
+  // 🔥 설정 변경 핸들러 (기존 로직 완전 유지하면서 개선)
+  const handleSettingsChange = useCallback((section, changes) => {
+    const newSettings = {
+      ...settings,
+      [section]: typeof changes === 'function'
+        ? changes(settings[section])
+        : { ...settings[section], ...changes }
     };
-  }, [allocations, initialCapital]);
+    updateSettings(newSettings);
+  }, [settings, updateSettings]);
+
+  // 할당 변경 핸들러 (기존 로직 유지)
+  const handleAllocationChange = useCallback((key, value) => {
+    const normalizedValue = Math.max(0, Math.min(1, value / 100));
+    const newAllocations = adjustOtherAllocations(key, normalizedValue, settings.allocation);
+    const normalized = normalizeAllocations(newAllocations);
+    handleSettingsChange('allocation', normalized);
+  }, [settings.allocation, handleSettingsChange]);
+
+  // 지표 토글 핸들러 (기존 로직 유지)
+  const handleIndicatorToggle = useCallback((indicator) => {
+    toggleIndicator(indicator);
+  }, [toggleIndicator]);
+
+  // 지표 설정 변경 핸들러 (기존 로직 유지)
+  const handleIndicatorChange = useCallback((indicator, parameter, value) => {
+    updateIndicator(indicator, parameter, value);
+  }, [updateIndicator]);
+
+  // 리스크 관리 변경 핸들러 (기존 로직 유지)
+  const handleRiskManagementChange = useCallback((property, value) => {
+    updateRiskManagement(property, value);
+  }, [updateRiskManagement]);
 
   return (
-    <div
-      className={`bg-white dark:bg-gray-900 rounded-lg shadow-lg max-w-4xl mx-auto ${className}`}
-    >
-      {/* 🔥 기존 헤더 그대로 복사 */}
-      <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
-        <div className="flex items-center space-x-3">
-          <CogIcon className="w-6 h-6 text-blue-500" />
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-              거래 설정
-            </h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              포트폴리오 할당과 거래 전략을 설정하세요
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col">
+
+        {/* 🔥 헤더 (완전히 개선) */}
+        <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2">
+              <CogIcon className="w-6 h-6 text-blue-600" />
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+                트레이딩 설정
+              </h2>
+            </div>
+
+            {/* 🔥 거래모드 토글 (새 기능) */}
+            <div className="flex items-center space-x-2 px-3 py-1 bg-gray-50 dark:bg-gray-700 rounded-lg">
+              <span className="text-sm text-gray-600 dark:text-gray-300">거래모드:</span>
+              <button
+                onClick={toggleTradingMode}
+                className={`px-3 py-1 rounded-full text-sm font-medium transition-all ${tradingMode === "live"
+                  ? "bg-red-100 text-red-700 border-2 border-red-200 hover:bg-red-200"
+                  : "bg-green-100 text-green-700 border-2 border-green-200 hover:bg-green-200"
+                  }`}
+                title={`현재: ${tradingMode === "live" ? "실거래" : "페이퍼트레이딩"} 모드`}
+              >
+                {tradingMode === "live" ? "🔴 실거래" : "🟢 페이퍼"}
+              </button>
+            </div>
+
+            {/* 🔥 총 자산 표시 (동적 값) */}
+            <div className="flex items-center space-x-2 px-3 py-1 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+              <DollarSignIcon className="w-4 h-4 text-blue-600" />
+              <div className="text-sm">
+                <span className="text-gray-600 dark:text-gray-300">총 자산: </span>
+                <span className="font-bold text-blue-600 dark:text-blue-400">
+                  ₩{allocationAmounts.total.toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {/* 🔥 활성 상태 표시 */}
+            {isActive && (
+              <div className="flex items-center space-x-1 px-2 py-1 bg-yellow-100 text-yellow-800 rounded-lg text-xs font-medium">
+                <ZapIcon className="w-3 h-3" />
+                <span>활성 거래 중</span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center space-x-3">
+            {/* 성공 메시지 */}
+            {showSuccess && (
+              <div className="flex items-center space-x-2 text-green-600 text-sm font-medium">
+                <CheckCircleIcon className="w-4 h-4" />
+                <span>저장 완료!</span>
+              </div>
+            )}
+
+            {/* 오류 메시지 */}
+            {errors.general && (
+              <div className="flex items-center space-x-2 text-red-600 text-sm font-medium max-w-xs">
+                <AlertTriangleIcon className="w-4 h-4" />
+                <span className="truncate">{errors.general}</span>
+              </div>
+            )}
+
+            {/* 초기화 버튼 */}
+            <button
+              onClick={handleReset}
+              className="flex items-center space-x-2 px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              title="기본값으로 초기화"
+            >
+              <RefreshCwIcon className="w-4 h-4" />
+              <span className="text-sm">초기화</span>
+            </button>
+
+            {/* 저장 버튼 (개선) */}
+            <button
+              onClick={handleSave}
+              disabled={!isDirty || isLoading}
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-all ${isDirty && !isLoading
+                ? "bg-blue-600 text-white hover:bg-blue-700 shadow-md"
+                : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                }`}
+            >
+              {isLoading ? (
+                <>
+                  <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></div>
+                  <span>저장 중...</span>
+                </>
+              ) : (
+                <>
+                  <SaveIcon className="w-4 h-4" />
+                  <span>저장</span>
+                </>
+              )}
+            </button>
+
+            {/* 닫기 버튼 */}
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              title="설정 닫기"
+            >
+              <XIcon className="w-5 h-5 text-gray-500" />
+            </button>
+          </div>
+        </div>
+
+        {/* 변경사항 안내 (기존 로직 개선) */}
+        <div className="px-6 py-3 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800">
+          <div className="flex items-center space-x-2 text-blue-800 dark:text-blue-200">
+            <InfoIcon className="w-4 h-4" />
+            <p className="text-sm">
+              포트폴리오 할당과 거래 전략을 설정하세요.
+              {isDirty && " 변경사항을 적용하려면 저장 버튼을 클릭하세요."}
+              {isActive && " 활성 거래 중에는 일부 설정이 다음 거래부터 적용됩니다."}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-2 text-sm">
-            {environment === "paper" ? (
-              <TestTubeIcon className="w-4 h-4 text-blue-500" />
-            ) : (
-              <SparklesIcon className="w-4 h-4 text-green-500" />
-            )}
-            <span>
-              현재 환경:{" "}
-              {environment === "paper" ? "페이퍼 트레이딩" : "실거래"}
-            </span>
-            <span className="text-gray-400">|</span>
-            <span>적용될 금액: {initialCapital.toLocaleString()}원</span>
-          </div>
+        {/* 메인 컨텐츠 */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* 탭 내비게이션 (기존 로직 유지 + 스타일 개선) */}
+          <div className="w-64 border-r border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4 overflow-y-auto">
+            <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
+              설정 카테고리
+            </h3>
 
-          {onClose && (
-            <button
-              onClick={onClose}
-              className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded"
-            >
-              <XIcon className="w-5 h-5" />
-            </button>
-          )}
-        </div>
-      </div>
+            {tabs.map((tab) => {
+              const IconComponent = tab.icon;
+              const isActiveTab = activeTab === tab.id;
 
-      <div className="p-6 space-y-8 max-h-96 overflow-y-auto">
-        {/* 🔥 기존 변경사항 알림 그대로 복사 */}
-        {hasChanges && (
-          <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-4">
-            <div className="flex items-start">
-              <AlertTriangleIcon className="w-5 h-5 text-yellow-600 dark:text-yellow-400 mt-0.5" />
-              <div className="ml-3">
-                <h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-                  설정 변경 사항이 있습니다
-                </h3>
-                <p className="mt-1 text-sm text-yellow-700 dark:text-yellow-300">
-                  변경사항을 적용하려면 저장 버튼을 클릭하세요.
-                  {isActive &&
-                    " 활성 거래 중에는 일부 설정이 다음 거래부터 적용됩니다."}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* 🔥 기존 활성 지표 정보 그대로 복사 */}
-        {activeIndicators.length > 0 && (
-          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md p-4">
-            <div className="flex items-center space-x-2">
-              <InfoIcon className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-              <span className="text-sm text-blue-800 dark:text-blue-200">
-                여러 지표가 동시에 신호를 줄 때만 거래
-              </span>
-            </div>
-            <div className="mt-2 flex items-center space-x-2">
-              <span className="text-sm text-blue-700 dark:text-blue-300">
-                현재 활성화된 기술적 지표:
-              </span>
-              {activeIndicators.map((indicator) => (
-                <span
-                  key={indicator}
-                  className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-blue-100 dark:bg-blue-800 text-blue-800 dark:text-blue-200"
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`w-full text-left p-3 rounded-lg mb-2 transition-all ${isActiveTab
+                    ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-l-4 border-blue-600 shadow-sm"
+                    : "hover:bg-white dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
+                    }`}
                 >
-                  {indicator}
-                </span>
-              ))}
-            </div>
+                  <div className="flex items-center space-x-3">
+                    <IconComponent className={`w-5 h-5 ${isActiveTab ? "text-blue-600 dark:text-blue-400" : "text-gray-500"
+                      }`} />
+                    <div>
+                      <div className="font-medium">{tab.label}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                        {tab.description}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 활성 지표 표시 */}
+                  {tab.id === "indicators" && (
+                    <div className="mt-2 text-xs">
+                      <span className="text-gray-500">활성: </span>
+                      <span className="font-medium text-blue-600 dark:text-blue-400">
+                        {activeIndicators.length}개
+                      </span>
+                    </div>
+                  )}
+                </button>
+              );
+            })}
           </div>
-        )}
 
-        {/* 🔥 탭으로 분리된 섹션들 */}
-        <Tabs>
-          <Tab label="포트폴리오 할당">
-            {/* 🔥 기존 TradingSettings_v1.jsx의 포트폴리오 섹션 그대로 복사 */}
-            <div className="space-y-6">
-              <div className="flex items-center space-x-2">
-                <PieChartIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                <h3 className="text-lg font-medium text-gray-900 dark:text-white">
-                  포트폴리오 할당
-                </h3>
-              </div>
+          {/* 탭 컨텐츠 (기존 로직 유지 + props 개선) */}
+          <div className="flex-1 p-6 overflow-y-auto bg-white dark:bg-gray-900">
+            {activeTab === "portfolio" && (
+              <PortfolioAllocation
+                allocation={settings.allocation}
+                onAllocationChange={handleAllocationChange}
+                initialCapital={allocationAmounts.total} // 🔥 동적 총액 전달
+                allocationAmounts={allocationAmounts} // 🔥 실제 금액 전달
+                totalValue={allocationAmounts.total}
+                errors={errors}
+              />
+            )}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <NumberInput
-                  label="현금 (40%)"
-                  value={allocations.cash * 100}
-                  onChange={(value) => handleAllocationChange("cash", value)}
-                  min={0}
-                  max={80}
-                  step={0.1}
-                  unit="%"
-                  icon={DollarSignIcon}
-                />
-                <NumberInput
-                  label="1티어 (안정) (42%)"
-                  value={allocations.t1 * 100}
-                  onChange={(value) => handleAllocationChange("t1", value)}
-                  min={0}
-                  max={80}
-                  step={0.1}
-                  unit="%"
-                  icon={ShieldCheckIcon}
-                />
-                <NumberInput
-                  label="2티어 (균형) (15%)"
-                  value={allocations.t2 * 100}
-                  onChange={(value) => handleAllocationChange("t2", value)}
-                  min={0}
-                  max={80}
-                  step={0.1}
-                  unit="%"
-                  icon={BarChart3Icon}
-                />
-                <NumberInput
-                  label="3티어 (성장) (3%)"
-                  value={allocations.t3 * 100}
-                  onChange={(value) => handleAllocationChange("t3", value)}
-                  min={0}
-                  max={80}
-                  step={0.1}
-                  unit="%"
-                  icon={TrendingUpIcon}
-                />
-              </div>
+            {activeTab === "indicators" && (
+              <TechnicalIndicators
+                indicators={settings.indicators}
+                onIndicatorChange={handleIndicatorChange}
+                onToggleIndicator={handleIndicatorToggle}
+                errors={errors}
+              />
+            )}
 
-              {/* 🔥 기존 할당 요약 그대로 복사 */}
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-md p-4">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div className="text-center">
-                    <p className="text-gray-600 dark:text-gray-400">현금</p>
-                    <p className="font-semibold text-green-600 dark:text-green-400">
-                      {portfolioValues.cash.toLocaleString()}원
-                    </p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-gray-600 dark:text-gray-400">
-                      T1 (안정)
-                    </p>
-                    <p className="font-semibold text-blue-600 dark:text-blue-400">
-                      {portfolioValues.t1.toLocaleString()}원
-                    </p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-gray-600 dark:text-gray-400">
-                      T2 (균형)
-                    </p>
-                    <p className="font-semibold text-yellow-600 dark:text-yellow-400">
-                      {portfolioValues.t2.toLocaleString()}원
-                    </p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-gray-600 dark:text-gray-400">
-                      T3 (성장)
-                    </p>
-                    <p className="font-semibold text-red-600 dark:text-red-400">
-                      {portfolioValues.t3.toLocaleString()}원
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </Tab>
+            {activeTab === "risk" && (
+              <RiskManagement
+                riskManagement={settings.riskManagement}
+                allocation={settings.allocation}
+                onRiskManagementChange={handleRiskManagementChange}
+                errors={errors}
+              />
+            )}
 
-          <Tab label="기술적 지표">
-            <div className="space-y-6">
-              <div className="flex items-center space-x-2">
-                <BarChart3Icon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                <h3 className="text-lg font-medium text-gray-900 dark:text-white">
-                  기술적 지표 설정
-                </h3>
-              </div>
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-md p-4">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  현재 활성화된 지표: RSI, MACD
-                </p>
-                <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
-                  기술적 지표 세부 설정은 향후 추가될 예정입니다.
-                </p>
-              </div>
-            </div>
-          </Tab>
-
-          <Tab label="리스크 관리">
-            <div className="space-y-6">
-              <div className="flex items-center space-x-2">
-                <ShieldCheckIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                <h3 className="text-lg font-medium text-gray-900 dark:text-white">
-                  리스크 관리
-                </h3>
-              </div>
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-md p-4">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  리스크 관리 설정은 향후 추가될 예정입니다.
-                </p>
-              </div>
-            </div>
-          </Tab>
-
-          <Tab label="고급 설정">
-            <div className="space-y-6">
-              <div className="flex items-center space-x-2">
-                <SlidersIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                <h3 className="text-lg font-medium text-gray-900 dark:text-white">
-                  고급 설정
-                </h3>
-              </div>
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-md p-4">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  고급 설정은 향후 추가될 예정입니다.
-                </p>
-              </div>
-            </div>
-          </Tab>
-        </Tabs>
-      </div>
-
-      {/* 🔥 기존 하단 버튼들 그대로 복사 */}
-      <div className="flex items-center justify-between p-6 bg-gray-50 dark:bg-gray-800 rounded-b-lg">
-        <div className="text-sm text-gray-600 dark:text-gray-400">
-          최종 수정: 12개 구석
+            {activeTab === "advanced" && (
+              <AdvancedSettings
+                settings={settings.advanced || {}}
+                onSettingsChange={(changes) => handleSettingsChange('advanced', changes)}
+                errors={errors}
+              />
+            )}
+          </div>
         </div>
 
-        <div className="flex space-x-3">
-          <button
-            onClick={handleReset}
-            className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-          >
-            <RefreshCwIcon className="w-4 h-4 mr-2 inline" />
-            초기화
-          </button>
+        {/* 하단 상태 바 (새로 추가) */}
+        <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-3 bg-gray-50 dark:bg-gray-800/50">
+          <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
+            <div className="flex items-center space-x-4">
+              <span>현재 탭: {tabs.find(t => t.id === activeTab)?.label}</span>
+              <span>•</span>
+              <span>총 자산: ₩{allocationAmounts.total.toLocaleString()}</span>
+              <span>•</span>
+              <span>모드: {tradingMode === "live" ? "실거래" : "페이퍼트레이딩"}</span>
+            </div>
 
-          <button
-            onClick={handleSave}
-            disabled={!hasChanges}
-            className={`px-4 py-2 rounded-md transition-colors focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-              hasChanges
-                ? "bg-blue-600 hover:bg-blue-700 text-white"
-                : "bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed"
-            }`}
-          >
-            <SaveIcon className="w-4 h-4 mr-2 inline" />
-            설정 저장
-          </button>
+            <div className="flex items-center space-x-2">
+              {isDirty && (
+                <span className="text-orange-600 dark:text-orange-400">
+                  • 저장되지 않은 변경사항
+                </span>
+              )}
+
+              <span className="text-xs text-gray-500">
+                마지막 저장: {localStorage.getItem("cryptowise_trading_settings")
+                  ? new Date(JSON.parse(localStorage.getItem("cryptowise_trading_settings") || '{}').savedAt || Date.now()).toLocaleString()
+                  : "없음"
+                }
+              </span>
+            </div>
+          </div>
         </div>
       </div>
     </div>

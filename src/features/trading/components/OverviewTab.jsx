@@ -52,7 +52,7 @@ const OverviewTab = ({
         totalProfit: 0,
         profitPercent: 0,
         portfolioProfitPercent: 0,
-        initialCapital: 1840000,
+        initialCapital: 0,
       }
     );
   }, [portfolioStats]);
@@ -156,11 +156,10 @@ const OverviewTab = ({
             <div className="flex justify-between items-center">
               <span className="text-sm text-slate-600">총 수익률</span>
               <span
-                className={`text-sm font-bold flex items-center ${
-                  safePortfolioStats.totalProfit >= 0
+                className={`text-sm font-bold flex items-center ${safePortfolioStats.totalProfit >= 0
                     ? "text-emerald-600"
                     : "text-red-600"
-                }`}
+                  }`}
               >
                 {safePortfolioStats.totalProfit >= 0 ? (
                   <TrendingUpIcon className="w-4 h-4 mr-1" />
@@ -197,11 +196,10 @@ const OverviewTab = ({
             <div className="flex justify-between items-center">
               <span className="text-sm text-slate-600">투자 수익률</span>
               <span
-                className={`text-sm font-bold ${
-                  safePortfolioStats.profitPercent >= 0
+                className={`text-sm font-bold ${safePortfolioStats.profitPercent >= 0
                     ? "text-emerald-600"
                     : "text-red-600"
-                }`}
+                  }`}
               >
                 {formatPercent(safePortfolioStats.profitPercent)}
               </span>
@@ -217,11 +215,10 @@ const OverviewTab = ({
             </div>
             <div className="text-right">
               <p
-                className={`text-2xl font-bold ${
-                  safePortfolioStats.totalProfit >= 0
+                className={`text-2xl font-bold ${safePortfolioStats.totalProfit >= 0
                     ? "text-emerald-600"
                     : "text-red-600"
-                }`}
+                  }`}
               >
                 {safePortfolioStats.totalProfit >= 0 ? "+" : ""}
                 {formatCurrency(safePortfolioStats.totalProfit)}
@@ -242,9 +239,9 @@ const OverviewTab = ({
               <span className="text-sm font-medium">
                 {safePortfolioData.coins.length > 0
                   ? formatCurrency(
-                      safePortfolioStats.totalProfit /
-                        safePortfolioData.coins.length
-                    )
+                    safePortfolioStats.totalProfit /
+                    safePortfolioData.coins.length
+                  )
                   : formatCurrency(0)}
               </span>
             </div>
@@ -357,11 +354,10 @@ const OverviewTab = ({
                 safePortfolioData.coins.map((coin, index) => (
                   <tr
                     key={coin.symbol}
-                    className={`hover:bg-slate-50 transition-colors ${
-                      index !== safePortfolioData.coins.length - 1
+                    className={`hover:bg-slate-50 transition-colors ${index !== safePortfolioData.coins.length - 1
                         ? "border-b border-slate-100"
                         : ""
-                    }`}
+                      }`}
                   >
                     <td className="py-4 px-6">
                       <div className="flex items-center space-x-3">
@@ -386,11 +382,10 @@ const OverviewTab = ({
                     </td>
                     <td className="py-4 px-4 text-right">
                       <span
-                        className={`text-sm font-bold flex items-center justify-end ${
-                          coin.profitPercent >= 0
+                        className={`text-sm font-bold flex items-center justify-end ${coin.profitPercent >= 0
                             ? "text-emerald-600"
                             : "text-red-600"
-                        }`}
+                          }`}
                       >
                         {coin.profitPercent >= 0 ? (
                           <TrendingUpIcon className="w-4 h-4 mr-1" />

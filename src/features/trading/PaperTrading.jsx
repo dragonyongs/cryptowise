@@ -131,7 +131,7 @@ const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
       dailyChangePercent:
         portfolioData.totalValue > 0
           ? ((portfolioStats.totalProfit * 0.02) / portfolioData.totalValue) *
-            100
+          100
           : 0,
       portfolioProfitPercent: portfolioStats.portfolioProfitPercent,
       unrealizedProfit: Math.max(portfolioStats.totalProfit, 0),
@@ -487,6 +487,13 @@ const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
     });
   }, [notifications]);
 
+  // 모달 배경 클릭 시 닫기
+  const handleModalBackdropClick = useCallback((e) => {
+    if (e.target === e.currentTarget) {
+      setShowSettings(false);
+    }
+  }, []);
+
   return (
     <div className="min-h-screen bg-slate-50">
       {/* 🎯 헤더 */}
@@ -553,15 +560,14 @@ const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
                             <div className="flex justify-between items-start">
                               <div className="flex-1">
                                 <h4
-                                  className={`font-medium ${
-                                    notification.type === "error"
-                                      ? "text-red-900"
-                                      : notification.type === "success"
-                                        ? "text-green-900"
-                                        : notification.type === "warning"
-                                          ? "text-amber-900"
-                                          : "text-slate-900"
-                                  }`}
+                                  className={`font-medium ${notification.type === "error"
+                                    ? "text-red-900"
+                                    : notification.type === "success"
+                                      ? "text-green-900"
+                                      : notification.type === "warning"
+                                        ? "text-amber-900"
+                                        : "text-slate-900"
+                                    }`}
                                 >
                                   {notification.title}
                                 </h4>
@@ -619,11 +625,10 @@ const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
                 <div className="flex items-center mt-2 space-x-2">
                   <span className="text-slate-500 text-sm">수익률</span>
                   <span
-                    className={`text-sm font-medium flex items-center ${
-                      currentPortfolioStats.portfolioProfitPercent >= 0
-                        ? "text-emerald-600"
-                        : "text-red-600"
-                    }`}
+                    className={`text-sm font-medium flex items-center ${currentPortfolioStats.portfolioProfitPercent >= 0
+                      ? "text-emerald-600"
+                      : "text-red-600"
+                      }`}
                   >
                     {currentPortfolioStats.portfolioProfitPercent >= 0 ? (
                       <GainIcon className="w-4 h-4 mr-1" />
@@ -637,18 +642,16 @@ const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
                 </div>
               </div>
               <div
-                className={`p-3 rounded-lg ${
-                  currentPortfolioStats.portfolioProfitPercent >= 0
-                    ? "bg-emerald-100"
-                    : "bg-red-100"
-                }`}
+                className={`p-3 rounded-lg ${currentPortfolioStats.portfolioProfitPercent >= 0
+                  ? "bg-emerald-100"
+                  : "bg-red-100"
+                  }`}
               >
                 <DollarSignIcon
-                  className={`w-6 h-6 ${
-                    currentPortfolioStats.portfolioProfitPercent >= 0
-                      ? "text-emerald-600"
-                      : "text-red-600"
-                  }`}
+                  className={`w-6 h-6 ${currentPortfolioStats.portfolioProfitPercent >= 0
+                    ? "text-emerald-600"
+                    : "text-red-600"
+                    }`}
                 />
               </div>
             </div>
@@ -660,9 +663,8 @@ const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
               <div>
                 <p className="text-sm text-slate-600">거래 상태</p>
                 <p
-                  className={`text-lg font-semibold ${
-                    isActive ? "text-emerald-600" : "text-slate-500"
-                  }`}
+                  className={`text-lg font-semibold ${isActive ? "text-emerald-600" : "text-slate-500"
+                    }`}
                 >
                   {isActive ? "활성" : "비활성"}
                 </p>
@@ -673,9 +675,8 @@ const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
                 </div>
               </div>
               <div
-                className={`p-3 rounded-lg ${
-                  isActive ? "bg-emerald-100" : "bg-slate-100"
-                }`}
+                className={`p-3 rounded-lg ${isActive ? "bg-emerald-100" : "bg-slate-100"
+                  }`}
               >
                 {isActive ? (
                   <CheckCircleIcon className="w-6 h-6 text-emerald-600" />
@@ -713,11 +714,10 @@ const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
               <div>
                 <p className="text-sm text-slate-600">수익금</p>
                 <p
-                  className={`text-2xl font-bold ${
-                    currentPortfolioStats.totalProfit >= 0
-                      ? "text-emerald-600"
-                      : "text-red-600"
-                  }`}
+                  className={`text-2xl font-bold ${currentPortfolioStats.totalProfit >= 0
+                    ? "text-emerald-600"
+                    : "text-red-600"
+                    }`}
                 >
                   {currentPortfolioStats.totalProfit >= 0 ? "+" : ""}
                   {formatCurrency(currentPortfolioStats.totalProfit)}
@@ -756,22 +756,20 @@ const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
               <div className="flex items-center space-x-3">
                 <button
                   onClick={toggleTestMode}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                    testMode
-                      ? "bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-200"
-                      : "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200"
-                  }`}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${testMode
+                    ? "bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-200"
+                    : "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200"
+                    }`}
                 >
                   {testMode ? "🧪 테스트 모드" : "💎 실전 모드"}
                 </button>
 
                 <button
                   onClick={() => setShowSettings(!showSettings)}
-                  className={`p-2 rounded-lg transition-all ${
-                    showSettings
-                      ? "text-blue-600 bg-blue-100"
-                      : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-                  }`}
+                  className={`p-2 rounded-lg transition-all ${showSettings
+                    ? "text-blue-600 bg-blue-100"
+                    : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                    }`}
                 >
                   <SettingsIcon className="w-5 h-5" />
                 </button>
@@ -786,11 +784,10 @@ const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
                   <button
                     onClick={handleQuickStart}
                     disabled={!hasSelectedCoins}
-                    className={`flex items-center space-x-3 px-6 py-3 rounded-xl font-semibold transition-all ${
-                      hasSelectedCoins
-                        ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
-                        : "bg-slate-200 text-slate-500 cursor-not-allowed"
-                    }`}
+                    className={`flex items-center space-x-3 px-6 py-3 rounded-xl font-semibold transition-all ${hasSelectedCoins
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
+                      : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                      }`}
                   >
                     <PlayIcon className="w-5 h-5" />
                     <span>거래 시작</span>
@@ -865,17 +862,16 @@ const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
 
             <div className="flex items-center space-x-2">
               <span
-                className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                  summary.strategyLabel === "초보수적"
-                    ? "bg-red-100 text-red-700"
-                    : summary.strategyLabel === "보수적"
-                      ? "bg-amber-100 text-amber-700"
-                      : summary.strategyLabel === "균형"
-                        ? "bg-sky-100 text-sky-700"
-                        : summary.strategyLabel === "적극적"
-                          ? "bg-emerald-100 text-emerald-700"
-                          : "bg-slate-100 text-slate-600"
-                }`}
+                className={`px-3 py-1 rounded-full text-xs font-semibold ${summary.strategyLabel === "초보수적"
+                  ? "bg-red-100 text-red-700"
+                  : summary.strategyLabel === "보수적"
+                    ? "bg-amber-100 text-amber-700"
+                    : summary.strategyLabel === "균형"
+                      ? "bg-sky-100 text-sky-700"
+                      : summary.strategyLabel === "적극적"
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-slate-100 text-slate-600"
+                  }`}
               >
                 {summary.strategyLabel}
               </span>
@@ -956,7 +952,7 @@ const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
         </div>
 
         {/* 🎯 설정 패널 */}
-        {showSettings && (
+        {/* {showSettings && (
           <div className="mb-6">
             <TradingSettings
               settings={tradingSettings}
@@ -966,6 +962,26 @@ const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
               testMode={testMode}
               onToggleTestMode={toggleTestMode}
             />
+          </div>
+        )} */}
+
+        {/* 🎯 모달 오버레이 */}
+        {showSettings && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            onClick={handleModalBackdropClick}
+          >
+            {/* 반투명 검정 배경 */}
+            <div className="absolute inset-0 bg-black bg-opacity-50 backdrop-blur-sm" />
+
+            {/* 모달 컨테이너 */}
+            <div className="relative z-10 w-full max-w-4xl mx-4 h-[calc(100vh-2rem)] overflow-y-auto">
+              {/* 모달 컨텐츠 */}
+              <TradingSettings
+                isActive={isActive}
+                onClose={() => setShowSettings(false)}
+              />
+            </div>
           </div>
         )}
 
@@ -979,21 +995,19 @@ const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
-                    className={`flex items-center space-x-2 py-4 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${
-                      activeTab === tab.id
-                        ? "border-slate-900 text-slate-900"
-                        : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
-                    }`}
+                    className={`flex items-center space-x-2 py-4 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${activeTab === tab.id
+                      ? "border-slate-900 text-slate-900"
+                      : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
+                      }`}
                   >
                     <Icon className="w-4 h-4" />
                     <span>{tab.label}</span>
                     {tab.badge && (
                       <span
-                        className={`px-2 py-0.5 rounded-full text-xs ${
-                          activeTab === tab.id
-                            ? "bg-slate-900 text-white"
-                            : "bg-slate-200 text-slate-600"
-                        }`}
+                        className={`px-2 py-0.5 rounded-full text-xs ${activeTab === tab.id
+                          ? "bg-slate-900 text-white"
+                          : "bg-slate-200 text-slate-600"
+                          }`}
                       >
                         {tab.badge}
                       </span>

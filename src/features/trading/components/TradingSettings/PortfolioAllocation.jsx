@@ -55,13 +55,12 @@ const PortfolioAllocation = React.memo(
               다양성:
             </span>
             <span
-              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                diversityIndex > 0.7
+              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${diversityIndex > 0.7
                   ? "bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400"
                   : diversityIndex > 0.5
                     ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400"
                     : "bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400"
-              }`}
+                }`}
             >
               {Math.round(diversityIndex * 100)}%
             </span>
@@ -135,11 +134,10 @@ const PortfolioAllocation = React.memo(
                 위험 자산 비율
               </span>
               <span
-                className={`font-semibold ${
-                  allocation.t2 + allocation.t3 > 0.3
+                className={`font-semibold ${allocation.t2 + allocation.t3 > 0.3
                     ? "text-red-600 dark:text-red-400"
                     : "text-green-600 dark:text-green-400"
-                }`}
+                  }`}
               >
                 {((allocation.t2 + allocation.t3) * 100).toFixed(1)}%
               </span>
