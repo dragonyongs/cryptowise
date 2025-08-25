@@ -1,6 +1,9 @@
-// src/services/data/centralDataManager.js - 완전한 최종 버전
-
+// src/services/data/centralDataManager.js - 전문가급 통합 버전
 import { upbitMarketService } from "../upbit/upbitMarketService.js";
+import { AdaptiveRateLimiter } from "./adaptiveRateLimiter.js";
+import { ApiCircuitBreaker } from "../patterns/circuitBreaker.js";
+import { ExponentialBackoffStrategy } from "../strategies/backoffStrategy.js";
+import { ApiHealthMonitor } from "../monitoring/apiHealthMonitor.js";
 import {
   sma,
   calculateRSI,
@@ -10,185 +13,203 @@ import {
 
 class CentralDataManager {
   constructor() {
+    // 🎯 전문가급 시스템 통합
+    this.rateLimiter = new AdaptiveRateLimiter();
+    this.circuitBreaker = new ApiCircuitBreaker();
+    this.backoffStrategy = new ExponentialBackoffStrategy();
+    this.healthMonitor = new ApiHealthMonitor();
+
+    // 🎯 데이터 관리
     this.priceCache = new Map();
     this.marketCache = new Map();
     this.lastUpdate = new Map();
-    this.subscribers = new Map(); // 구독자 관리
+    this.subscribers = new Map();
+    this.priceHistory = new Map();
+    this.maxHistoryLength = 100;
 
-    // API 호출 제한 관리
-    this.rateLimiter = {
-      upbit: { calls: 0, resetTime: 0, limit: 10 }, // 분당 10회
-      lastCall: 0,
-      minInterval: 6000, // 6초 간격
+    // 🎯 계층적 업데이트 전략
+    this.updateStrategies = {
+      critical: {
+        coins: ["BTC", "ETH"],
+        interval: 10000, // 10초
+        priority: 1,
+        maxRetries: 3,
+      },
+      important: {
+        coins: [],
+        interval: 30000, // 30초
+        priority: 2,
+        maxRetries: 2,
+      },
+      background: {
+        coins: [],
+        interval: 120000, // 2분
+        priority: 3,
+        maxRetries: 1,
+      },
     };
 
-    // 업데이트 스케줄
-    this.updateSchedule = {
-      prices: 30000, // 30초마다
-      markets: 300000, // 5분마다
-      tickers: 60000, // 1분마다
-    };
-
+    // 🎯 시스템 상태
     this.isInitialized = false;
     this.updateIntervals = {};
-    this.selectedCoins = []; // 선택된 코인 추적
-    this.priceHistory = new Map(); // 가격 히스토리 저장
-    this.maxHistoryLength = 100; // 최대 100개 캔들
+    this.selectedCoins = [];
+    this.systemHealth = "healthy";
+
+    // 🎯 5분마다 자동 최적화
+    setInterval(() => this.optimizePerformance(), 300000);
   }
 
-  // 🎯 초기화 - 한 번만 데이터 로드
+  // 🎯 초기화
   async initialize(selectedCoins = []) {
     if (this.isInitialized) {
       console.log("🔄 중앙 데이터 매니저 이미 초기화됨");
       return;
     }
 
-    console.log("🚀 중앙 데이터 매니저 초기화");
+    console.log("🚀 중앙 데이터 매니저 초기화 시작");
 
     try {
-      // 선택된 코인 저장
-      this.selectedCoins =
-        selectedCoins.length > 0 ? selectedCoins : ["BTC", "ETH"];
+      // 선택된 코인 분류
+      this.categorizeCoins(selectedCoins);
 
-      // 1. 초기 마켓 리스트 로드 (한 번만)
-      await this.loadInitialMarketData();
+      // 초기 데이터 로드
+      await this.loadInitialData();
 
-      // 2. 선택된 코인들의 초기 데이터 로드
-      if (this.selectedCoins.length > 0) {
-        await this.loadInitialPriceData(this.selectedCoins);
-      }
-
-      // 3. 스케줄러 시작
-      this.startUpdateScheduler();
+      // 스케줄러 시작
+      this.startSmartScheduler();
 
       this.isInitialized = true;
-      console.log("✅ 중앙 데이터 매니저 초기화 완료");
+      console.log("✅ 전문가급 중앙 데이터 매니저 초기화 완료");
     } catch (error) {
       console.error("❌ 초기화 실패:", error);
       throw error;
     }
   }
 
-  // 🎯 초기 마켓 데이터 로드
-  async loadInitialMarketData() {
-    try {
-      console.log("📊 초기 마켓 데이터 로드 시작");
+  // 🎯 코인 분류 (우선순위별)
+  categorizeCoins(selectedCoins) {
+    const allCoins = selectedCoins.length > 0 ? selectedCoins : ["BTC", "ETH"];
 
-      const marketList = await upbitMarketService.getMarketList(true);
+    // Critical (핵심 코인)
+    this.updateStrategies.critical.coins = allCoins.filter((coin) =>
+      ["BTC", "ETH"].includes(coin)
+    );
 
-      // 마켓 캐시에 저장
-      marketList.forEach((market) => {
-        this.marketCache.set(market.symbol, {
-          data: market,
-          timestamp: Date.now(),
-        });
-      });
+    // Important (사용자 관심 코인)
+    this.updateStrategies.important.coins = allCoins.filter(
+      (coin) => !["BTC", "ETH"].includes(coin)
+    );
 
-      console.log(`✅ 초기 마켓 데이터 ${marketList.length}개 로드 완료`);
-    } catch (error) {
-      console.error("❌ 초기 마켓 데이터 로드 실패:", error);
-      throw error;
+    this.selectedCoins = allCoins;
+    console.log(
+      `📊 코인 분류 완료: Critical(${this.updateStrategies.critical.coins.length}), Important(${this.updateStrategies.important.coins.length})`
+    );
+  }
+
+  // 🎯 초기 데이터 로드
+  async loadInitialData() {
+    // 마켓 데이터 로드
+    await this.executeSmartApiCall(
+      () => this.loadMarketData(),
+      "market_load",
+      "critical"
+    );
+
+    // 가격 데이터 로드
+    if (this.selectedCoins.length > 0) {
+      await this.executeSmartApiCall(
+        () => this.loadPriceData(this.selectedCoins),
+        "price_load",
+        "critical"
+      );
     }
   }
 
-  // 🎯 초기 가격 데이터 로드
-  async loadInitialPriceData(selectedCoins) {
-    try {
-      console.log("💰 초기 가격 데이터 로드 시작", selectedCoins);
+  // 🎯 스마트 API 실행 (모든 전략 통합)
+  async executeSmartApiCall(operation, operationId, priority = "background") {
+    return await this.circuitBreaker.execute(async () => {
+      return await this.backoffStrategy.executeWithBackoff(
+        async () => {
+          const startTime = Date.now();
 
-      const tickerData = await upbitMarketService.getTickerData(selectedCoins);
+          // Rate Limiter 체크
+          if (!this.rateLimiter.canMakeCall(priority)) {
+            const delay = this.rateLimiter.calculateOptimalInterval();
+            throw new Error(`RATE_LIMIT: ${delay}ms 대기 필요`);
+          }
 
-      // 가격 캐시에 저장
-      Array.from(tickerData.values()).forEach((ticker) => {
-        const symbol = ticker.market.replace("KRW-", "");
-        this.priceCache.set(symbol, {
-          data: ticker,
-          timestamp: Date.now(),
-        });
-      });
+          try {
+            const result = await operation();
+            const responseTime = Date.now() - startTime;
 
-      console.log(`✅ 초기 가격 데이터 ${tickerData.size}개 로드 완료`);
-    } catch (error) {
-      console.error("❌ 초기 가격 데이터 로드 실패:", error);
-      throw error;
-    }
-  }
+            // 성공 기록
+            this.rateLimiter.recordCall(true, responseTime);
+            this.healthMonitor.updateMetrics({
+              success: true,
+              responseTime,
+              timestamp: Date.now(),
+            });
 
-  // 🎯 구독 기반 데이터 제공
-  subscribe(serviceId, callback, dataTypes = ["prices"]) {
-    if (!this.subscribers.has(serviceId)) {
-      this.subscribers.set(serviceId, { callback, dataTypes });
-      console.log(`📡 ${serviceId} 구독 등록:`, dataTypes);
-    }
+            return result;
+          } catch (error) {
+            const responseTime = Date.now() - startTime;
 
-    // 즉시 현재 데이터 제공
-    this.notifySubscriber(serviceId);
+            // 실패 기록
+            this.rateLimiter.recordCall(false, responseTime);
+            this.healthMonitor.updateMetrics({
+              success: false,
+              responseTime,
+              timestamp: Date.now(),
+            });
 
-    return () => this.unsubscribe(serviceId);
-  }
-
-  // 🎯 구독 해제
-  unsubscribe(serviceId) {
-    const removed = this.subscribers.delete(serviceId);
-    if (removed) {
-      console.log(`📡 ${serviceId} 구독 해제`);
-    }
-    return removed;
-  }
-
-  // 🎯 캐시된 데이터 조회 (API 호출 없음)
-  getCachedPrice(symbol) {
-    const cached = this.priceCache.get(symbol);
-    if (!cached) return null;
-
-    const age = Date.now() - cached.timestamp;
-    if (age > 300000) return null; // 5분 이상 된 데이터는 무효
-
-    return cached.data;
-  }
-
-  // 🎯 여러 코인 데이터 한 번에 조회
-  getCachedPrices(symbols) {
-    const result = new Map();
-    symbols.forEach((symbol) => {
-      const data = this.getCachedPrice(symbol);
-      if (data) result.set(symbol, data);
+            throw error;
+          }
+        },
+        operationId,
+        this.updateStrategies[priority]?.maxRetries || 1
+      );
     });
-    return result;
   }
 
-  // 🎯 스케줄러 기반 업데이트
-  startUpdateScheduler() {
-    // 30초마다 가격 업데이트
-    this.updateIntervals.prices = setInterval(() => {
-      this.updateSelectedCoinsData();
-    }, this.updateSchedule.prices);
+  // 🎯 스마트 스케줄러
+  startSmartScheduler() {
+    // Critical 코인 스케줄러
+    if (this.updateStrategies.critical.coins.length > 0) {
+      this.updateIntervals.critical = setInterval(() => {
+        this.updateCoinsData("critical");
+      }, this.updateStrategies.critical.interval);
+    }
 
-    // 5분마다 마켓 데이터 업데이트
+    // Important 코인 스케줄러
+    if (this.updateStrategies.important.coins.length > 0) {
+      this.updateIntervals.important = setInterval(() => {
+        this.updateCoinsData("important");
+      }, this.updateStrategies.important.interval);
+    }
+
+    // Background 업데이트
     this.updateIntervals.markets = setInterval(() => {
       this.updateMarketData();
-    }, this.updateSchedule.markets);
+    }, 300000); // 5분
 
-    console.log("⏰ 업데이트 스케줄러 시작");
+    console.log("⏰ 스마트 스케줄러 시작");
   }
 
-  // 🎯 선택된 코인 데이터 업데이트
-  async updateSelectedCoinsData() {
-    const activeSymbols = this.getActiveSymbols();
-    if (activeSymbols.length === 0) return;
-
-    if (!this.canMakeApiCall()) {
-      console.log("🛑 API 제한으로 업데이트 건너뜀");
-      return;
-    }
+  // 🎯 우선순위별 코인 데이터 업데이트
+  async updateCoinsData(priority) {
+    const strategy = this.updateStrategies[priority];
+    if (!strategy || strategy.coins.length === 0) return;
 
     try {
-      console.log(`🔄 ${activeSymbols.length}개 코인 업데이트`);
+      console.log(`🔄 ${priority} 코인 업데이트: ${strategy.coins.join(", ")}`);
 
-      // 한 번만 API 호출
-      const tickerData = await upbitMarketService.getTickerData(activeSymbols);
+      const tickerData = await this.executeSmartApiCall(
+        () => upbitMarketService.getTickerData(strategy.coins),
+        `update_${priority}`,
+        priority
+      );
 
-      // 한 번의 루프로 히스토리 업데이트 + 지표 계산 + 캐시 저장
+      // 데이터 처리
       Array.from(tickerData.values()).forEach((ticker) => {
         const symbol = ticker.market.replace("KRW-", "");
         const currentPrice = ticker.trade_price;
@@ -206,26 +227,83 @@ class CentralDataManager {
           currentPrice
         );
 
-        // 모든 데이터 포함해서 한 번에 캐시 저장
+        // 캐시 저장
         this.priceCache.set(symbol, {
           data: {
             ...ticker,
-            ...indicators, // 계산된 지표들
+            ...indicators,
             signed_change_rate: ticker.signed_change_rate,
             avgVolume: this.calculateAverageVolume(symbol),
           },
           timestamp: Date.now(),
+          priority,
         });
       });
 
-      this.rateLimiter.calls++;
-      this.rateLimiter.lastCall = Date.now();
-
-      // 구독자들에게 알림
-      this.notifyAllSubscribers("prices");
+      // 구독자 알림
+      this.notifyAllSubscribers("prices", priority);
     } catch (error) {
-      console.error("가격 데이터 업데이트 실패:", error);
+      console.error(`❌ ${priority} 코인 업데이트 실패:`, error.message);
     }
+  }
+
+  // 🎯 마켓 데이터 업데이트
+  async updateMarketData() {
+    try {
+      console.log("🔄 마켓 데이터 업데이트");
+
+      const marketList = await this.executeSmartApiCall(
+        () => upbitMarketService.getMarketList(true),
+        "market_update",
+        "background"
+      );
+
+      // 마켓 캐시 업데이트
+      marketList.forEach((market) => {
+        this.marketCache.set(market.symbol, {
+          data: market,
+          timestamp: Date.now(),
+        });
+      });
+
+      this.notifyAllSubscribers("markets");
+    } catch (error) {
+      console.error("❌ 마켓 데이터 업데이트 실패:", error.message);
+    }
+  }
+
+  // 🎯 성능 기반 자동 최적화
+  async optimizePerformance() {
+    const healthStatus = this.healthMonitor.assessHealth();
+    const strategy = this.healthMonitor.getRecommendedStrategy(healthStatus);
+
+    console.log(`🎯 성능 최적화 실행: ${healthStatus} 상태`);
+
+    // Rate Limiter 조정
+    this.rateLimiter.adjustLimits();
+
+    // 업데이트 간격 조정
+    if (healthStatus === "critical") {
+      this.adjustUpdateIntervals(2.0); // 간격 2배 증가
+    } else if (healthStatus === "warning") {
+      this.adjustUpdateIntervals(1.5); // 간격 1.5배 증가
+    } else {
+      this.adjustUpdateIntervals(1.0); // 정상
+    }
+
+    this.systemHealth = healthStatus;
+
+    console.log(`✅ 최적화 완료: ${JSON.stringify(strategy)}`);
+  }
+
+  // 🎯 업데이트 간격 조정
+  adjustUpdateIntervals(multiplier) {
+    Object.keys(this.updateStrategies).forEach((priority) => {
+      const newInterval = Math.round(
+        this.updateStrategies[priority].interval * multiplier
+      );
+      this.updateStrategies[priority].interval = Math.min(newInterval, 300000); // 최대 5분
+    });
   }
 
   // 🎯 가격 히스토리 업데이트
@@ -241,118 +319,18 @@ class CentralDataManager {
       volume: volume || 0,
     });
 
-    // 최대 길이 유지
     if (history.length > this.maxHistoryLength) {
       history.shift();
     }
   }
 
-  // 🎯 마켓 데이터 업데이트
-  async updateMarketData() {
-    if (!this.canMakeApiCall()) {
-      console.log("🛑 API 제한으로 마켓 업데이트 건너뜀");
-      return;
-    }
-
-    try {
-      console.log("🔄 마켓 데이터 업데이트");
-
-      const marketList = await upbitMarketService.getMarketList(true);
-
-      // 마켓 캐시 업데이트
-      marketList.forEach((market) => {
-        this.marketCache.set(market.symbol, {
-          data: market,
-          timestamp: Date.now(),
-        });
-      });
-
-      this.rateLimiter.calls++;
-      this.rateLimiter.lastCall = Date.now();
-
-      // 구독자들에게 알림
-      this.notifyAllSubscribers("markets");
-    } catch (error) {
-      console.error("마켓 데이터 업데이트 실패:", error);
-    }
-  }
-
-  // 🎯 활성 심볼 가져오기
-  getActiveSymbols() {
-    // 선택된 코인들 + 구독자들이 요청한 코인들
-    const subscriberSymbols = Array.from(this.subscribers.keys())
-      .map((id) => this.selectedCoins)
-      .flat();
-
-    const allSymbols = [
-      ...new Set([...this.selectedCoins, ...subscriberSymbols]),
-    ];
-    return allSymbols.filter(Boolean);
-  }
-
-  // 🎯 API 호출 가능 여부 체크
-  canMakeApiCall() {
-    const now = Date.now();
-
-    // 분당 호출 제한 체크
-    if (now - this.rateLimiter.resetTime > 60000) {
-      this.rateLimiter.calls = 0;
-      this.rateLimiter.resetTime = now;
-    }
-
-    if (this.rateLimiter.calls >= this.rateLimiter.limit) {
-      return false;
-    }
-
-    // 최소 간격 체크
-    if (now - this.rateLimiter.lastCall < this.rateLimiter.minInterval) {
-      return false;
-    }
-
-    return true;
-  }
-
-  // 🎯 구독자들에게 데이터 배포
-  notifyAllSubscribers(dataType) {
-    this.subscribers.forEach((subscriber, serviceId) => {
-      if (subscriber.dataTypes.includes(dataType)) {
-        this.notifySubscriber(serviceId);
-      }
-    });
-  }
-
-  // 🎯 개별 구독자 알림
-  notifySubscriber(serviceId) {
-    const subscriber = this.subscribers.get(serviceId);
-    if (!subscriber) return;
-
-    const data = {
-      prices: Object.fromEntries(this.priceCache),
-      markets: Object.fromEntries(this.marketCache),
-      timestamp: Date.now(),
-    };
-
-    try {
-      subscriber.callback(data);
-    } catch (error) {
-      console.error(`구독자 ${serviceId} 알림 실패:`, error);
-    }
-  }
-
-  // 🎯 코인 목록 업데이트
-  updateWatchedCoins(newCoins) {
-    this.selectedCoins = [...new Set([...this.selectedCoins, ...newCoins])];
-    console.log(`👀 감시 코인 업데이트: ${this.selectedCoins.length}개`);
-  }
-
-  // 🎯 기술적 지표 계산 함수 (완전 수정)
+  // 🎯 기술적 지표 계산
   calculateTechnicalIndicators(symbol, currentPrice) {
     const history = this.priceHistory.get(symbol) || [];
 
-    // 데이터 부족시에도 의미 있는 지표 제공
     if (history.length < 2) {
       return {
-        rsi: 50, // 중립값
+        rsi: 50,
         macd: { line: 0, signal: 0, histogram: 0 },
         ma20: currentPrice,
         ma60: currentPrice,
@@ -367,16 +345,12 @@ class CentralDataManager {
     const prices = history.map((h) => h.price);
 
     try {
-      // 점진적 지표 계산 (데이터 부족해도 계산)
       const rsi =
         prices.length >= 14
           ? calculateRSI(prices, 14)
           : this.estimateRSI(prices, currentPrice);
-
       const ma20 = prices.length >= 20 ? sma(prices.slice(-20)) : sma(prices);
-
       const ma60 = prices.length >= 60 ? sma(prices.slice(-60)) : ma20;
-
       const macd = calculateMACD(prices) || {
         line: 0,
         signal: 0,
@@ -411,7 +385,7 @@ class CentralDataManager {
     }
   }
 
-  // 🎯 RSI 추정 함수
+  // 🎯 RSI 추정
   estimateRSI(prices, currentPrice) {
     if (prices.length < 2) return 50;
 
@@ -425,7 +399,6 @@ class CentralDataManager {
       recentChanges.reduce((sum, change) => sum + change, 0) /
       recentChanges.length;
 
-    // 단순 추정: 강한 상승이면 70+, 강한 하락이면 30-, 나머지는 50 근처
     if (avgChange > 3) return Math.min(75, 50 + avgChange * 5);
     if (avgChange < -3) return Math.max(25, 50 + avgChange * 5);
     return 50;
@@ -439,7 +412,7 @@ class CentralDataManager {
     const recentVolumes = history
       .slice(-7)
       .map((h) => h.volume)
-      .filter((vol) => vol && vol > 0); // null/0 값 필터링
+      .filter((vol) => vol && vol > 0);
 
     if (recentVolumes.length === 0) return null;
 
@@ -448,24 +421,136 @@ class CentralDataManager {
     );
   }
 
-  // 🎯 상태 조회
+  // 🎯 마켓 데이터 로드
+  async loadMarketData() {
+    console.log("📊 마켓 데이터 로드");
+    const marketList = await upbitMarketService.getMarketList(true);
+
+    marketList.forEach((market) => {
+      this.marketCache.set(market.symbol, {
+        data: market,
+        timestamp: Date.now(),
+      });
+    });
+
+    return marketList;
+  }
+
+  // 🎯 가격 데이터 로드
+  async loadPriceData(symbols) {
+    console.log("💰 가격 데이터 로드:", symbols);
+    const tickerData = await upbitMarketService.getTickerData(symbols);
+
+    Array.from(tickerData.values()).forEach((ticker) => {
+      const symbol = ticker.market.replace("KRW-", "");
+      this.priceCache.set(symbol, {
+        data: ticker,
+        timestamp: Date.now(),
+      });
+    });
+
+    return tickerData;
+  }
+
+  // 🎯 구독 관리
+  subscribe(serviceId, callback, dataTypes = ["prices"]) {
+    if (!this.subscribers.has(serviceId)) {
+      this.subscribers.set(serviceId, { callback, dataTypes });
+      console.log(`📡 ${serviceId} 구독 등록:`, dataTypes);
+    }
+
+    this.notifySubscriber(serviceId);
+    return () => this.unsubscribe(serviceId);
+  }
+
+  unsubscribe(serviceId) {
+    const removed = this.subscribers.delete(serviceId);
+    if (removed) {
+      console.log(`📡 ${serviceId} 구독 해제`);
+    }
+    return removed;
+  }
+
+  // 🎯 구독자 알림
+  notifyAllSubscribers(dataType, priority = null) {
+    this.subscribers.forEach((subscriber, serviceId) => {
+      if (subscriber.dataTypes.includes(dataType)) {
+        this.notifySubscriber(serviceId, priority);
+      }
+    });
+  }
+
+  notifySubscriber(serviceId, priority = null) {
+    const subscriber = this.subscribers.get(serviceId);
+    if (!subscriber) return;
+
+    const data = {
+      prices: Object.fromEntries(this.priceCache),
+      markets: Object.fromEntries(this.marketCache),
+      timestamp: Date.now(),
+      priority,
+      systemHealth: this.systemHealth,
+    };
+
+    try {
+      subscriber.callback(data);
+    } catch (error) {
+      console.error(`구독자 ${serviceId} 알림 실패:`, error);
+    }
+  }
+
+  // 🎯 캐시된 데이터 조회
+  getCachedPrice(symbol) {
+    const cached = this.priceCache.get(symbol);
+    if (!cached) return null;
+
+    const age = Date.now() - cached.timestamp;
+    if (age > 300000) return null; // 5분 이상 된 데이터는 무효
+
+    return cached.data;
+  }
+
+  getCachedPrices(symbols) {
+    const result = new Map();
+    symbols.forEach((symbol) => {
+      const data = this.getCachedPrice(symbol);
+      if (data) result.set(symbol, data);
+    });
+    return result;
+  }
+
+  // 🎯 코인 목록 업데이트
+  updateWatchedCoins(newCoins) {
+    this.categorizeCoins([...new Set([...this.selectedCoins, ...newCoins])]);
+    console.log(`👀 감시 코인 업데이트: ${this.selectedCoins.length}개`);
+  }
+
+  // 🎯 통합 상태 조회
   getStatus() {
     return {
       isInitialized: this.isInitialized,
+      systemHealth: this.systemHealth,
+      selectedCoins: this.selectedCoins.length,
       subscriberCount: this.subscribers.size,
       cachedPrices: this.priceCache.size,
       cachedMarkets: this.marketCache.size,
-      selectedCoins: this.selectedCoins.length,
-      rateLimiter: {
-        calls: this.rateLimiter.calls,
-        limit: this.rateLimiter.limit,
-        canCall: this.canMakeApiCall(),
-      },
       priceHistorySize: this.priceHistory.size,
-      totalHistoryRecords: Array.from(this.priceHistory.values()).reduce(
-        (sum, history) => sum + history.length,
-        0
-      ),
+
+      // 각 시스템 상태
+      rateLimiter: this.rateLimiter.getStatus(),
+      circuitBreaker: this.circuitBreaker.getStatus(),
+      healthMonitor: this.healthMonitor.getStatus(),
+
+      strategies: {
+        critical: {
+          coins: this.updateStrategies.critical.coins.length,
+          interval: this.updateStrategies.critical.interval,
+        },
+        important: {
+          coins: this.updateStrategies.important.coins.length,
+          interval: this.updateStrategies.important.interval,
+        },
+      },
     };
   }
 
@@ -483,12 +568,13 @@ class CentralDataManager {
       priceHistoryLength: this.priceHistory.get(symbol)?.length || 0,
       lastUpdate: new Date(cached.timestamp).toLocaleTimeString(),
       dataAge: Date.now() - cached.timestamp,
+      priority: cached.priority || "unknown",
     };
   }
 
   // 🎯 정리
   cleanup() {
-    console.log("🧹 중앙 데이터 매니저 정리 시작...");
+    console.log("🧹 전문가급 중앙 데이터 매니저 정리 시작...");
 
     // 인터벌 정리
     Object.values(this.updateIntervals).forEach((intervalId) => {
@@ -503,12 +589,15 @@ class CentralDataManager {
     this.subscribers.clear();
     this.priceHistory.clear();
 
+    // 시스템 리셋
+    this.circuitBreaker.reset();
+
     // 상태 초기화
     this.isInitialized = false;
     this.updateIntervals = {};
     this.selectedCoins = [];
 
-    console.log("✅ 중앙 데이터 매니저 정리 완료");
+    console.log("✅ 전문가급 중앙 데이터 매니저 정리 완료");
   }
 }
 
