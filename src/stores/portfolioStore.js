@@ -186,6 +186,30 @@ function performUnifiedCalculation(portfolio, totalValue, config) {
   const initialCapital =
     config?.initialCapital || PORTFOLIO_CONSTANTS.DEFAULT_INITIAL_BALANCE;
 
+  // 🔥 현재 문제: portfolio가 null이거나 데이터가 없을 때 처리
+  if (!portfolio) {
+    console.warn("⚠️ Portfolio가 null - 초기자본으로 초기화");
+    const fallbackCash = initialCapital > 0 ? initialCapital : 3000000;
+
+    return {
+      coins: [],
+      cash: {
+        symbol: "KRW",
+        value: fallbackCash, // ✅ 초기자본 사용
+        percentage: 100,
+      },
+      totalValue: fallbackCash, // ✅ 0이 아닌 초기자본 사용
+      stats: {
+        totalInvestment: 0,
+        currentValue: fallbackCash, // ✅ 현재 가치도 초기자본으로 설정
+        totalProfit: 0,
+        profitPercent: 0,
+        portfolioProfitPercent: 0, // ✅ 초기 상태는 0%
+        initialCapital,
+      },
+    };
+  }
+
   let coinsObj = {};
 
   // 데이터 소스 통합

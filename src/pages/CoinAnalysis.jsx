@@ -802,7 +802,7 @@ export default function CoinAnalysis() {
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-96 overflow-hidden">
             <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-              <h3 className="text-lg font-semibold">코인 선택</h3>
+              <h3 className="text-lg font-semibold dark:text-slate-200">코인 선택</h3>
               <button
                 onClick={() => setShowCoinSelector(false)}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"

@@ -23,8 +23,8 @@ const SliderInput = React.memo(({
   return (
     <div className={`space-y-2 ${className}`}>
       <div className="flex justify-between items-center">
-        <label className="text-sm font-medium text-gray-700">{label}</label>
-        <span className="text-sm font-semibold text-gray-900">
+        <label className="text-sm font-medium text-gray-700 dark:text-slate-300">{label}</label>
+        <span className="text-sm font-semibold text-gray-900 dark:text-slate-400">
           {localValue.toFixed(1)}{unit}
         </span>
       </div>

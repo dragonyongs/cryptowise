@@ -65,7 +65,7 @@ function PageWrapper({ children, className = "" }) {
       animate="animate"
       exit="exit"
       variants={pageVariants}
-      className={`w-full min-h-screen ${className}`}
+      className={`w-full min-h-screen dark:bg-gray-900 ${className}`}
     >
       {children}
     </motion.div>

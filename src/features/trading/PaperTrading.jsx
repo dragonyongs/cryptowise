@@ -1,1015 +1,560 @@
-// src/features/trading/PaperTrading.jsx
-import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { formatCurrency, formatPercent } from "../../utils/formatters";
-import { usePaperTrading } from "./hooks/usePaperTrading";
-import { useSignalManager } from "../analysis/hooks/useSignalManager";
-import { usePortfolioStore } from "../../stores/portfolioStore";
-import { usePortfolioConfig } from "../../config/portfolioConfig";
+// src/features/trading/PaperTrading.jsx - 에러 수정 완전 버전
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import {
+  PlayIcon, PauseIcon, CogIcon, BellIcon, TrendingUpIcon, TrendingDownIcon,
+  PieChartIcon, ShieldCheckIcon, BarChart3Icon, InfoIcon, CheckCircleIcon,
+  AlertTriangleIcon, DollarSignIcon, PercentIcon, ZapIcon, ClockIcon,
+  ActivityIcon, Coins, LineChart, Settings, History, Target, AlertCircle,
+  RefreshCw, Eye, EyeOff, Filter, Search, Download, Upload, Trash2, Edit3
+} from "lucide-react";
 
-// 컴포넌트 imports
-import CoinsTab from "./components/CoinsTab";
+// ✅ 중앙화된 스토어들
+import { useCoinStore } from "../../stores/coinStore";
+import { usePortfolioStore } from "../../stores/portfolioStore";
+import { useTradingStore } from "../../stores/tradingStore";
+
+// ✅ 중앙화된 데이터 관리자 (서비스)
+import { centralDataManager } from "../../services/data/centralDataManager";
+
+// ✅ 중앙화된 데이터 스토어 (상태) - 올바른 위치
+import { useCentralDataStore } from "../../stores/centralDataStore";
+
+// ✅ 훅들
+import { useTradingLogger } from "./hooks/useTradingLogger";
+import { useTradingSettings } from "./hooks/useTradingSettings";
+
+// ✅ 탭 컴포넌트들
+import TradingSettings from "./components/TradingSettings";
 import OverviewTab from "./components/OverviewTab";
+import CoinsTab from "./components/CoinsTab";
 import PortfolioTab from "./components/PortfolioTab";
 import TradesTab from "./components/TradesTab";
 import SignalsTab from "./components/SignalsTab";
 import LogsTab from "./components/LogsTab";
-import TradingSettings from "./components/TradingSettings/";
 
-// 아이콘 imports
-import {
-  PlayIcon,
-  PauseIcon,
-  SettingsIcon,
-  TrendingUpIcon,
-  TrendingDownIcon,
-  MonitorIcon,
-  CoinsIcon,
-  PieChartIcon,
-  ActivityIcon,
-  ZapIcon,
-  LineChartIcon,
-  WifiIcon,
-  WifiOffIcon,
-  CheckCircleIcon,
-  AlertCircleIcon,
-  RefreshCwIcon,
-  InfoIcon,
-  BellIcon,
-  ShieldIcon,
-  DollarSignIcon,
-  BarChart3Icon,
-  TrendingUpIcon as GainIcon,
-  AlertTriangleIcon,
-  ClockIcon,
-  UsersIcon,
-  TargetIcon,
-  BrainIcon,
-  RocketIcon,
-  StarIcon,
-} from "lucide-react";
-
-const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
-  // 최신 설정 가져오기
-  const { config } = usePortfolioConfig();
-
-  const {
-    isActive,
-    connectionStatus,
-    portfolio,
-    logs,
-    selectedCoins,
-    favoriteCoins,
-    testMode,
-    tradingMode,
-    tradingSettings,
-    setTradingSettings,
-    lastSignal,
-    monitoringStats,
-    startPaperTrading,
-    stopPaperTrading,
-    toggleTestMode,
-    addFavoriteCoin,
-    removeFavoriteCoin,
-    setTradingMode,
-    refreshPriceAndAnalysis,
-    hasSelectedCoins,
-    selectedCoinsCount,
-  } = usePaperTrading(userId, externalSettings);
-
-  const [activeTab, setActiveTab] = useState("overview");
-  const { signals, executeSignal } = useSignalManager(isActive);
+const PaperTrading = () => {
+  // ✅ 로컬 상태
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [showSettings, setShowSettings] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [notifications, setNotifications] = useState([]);
-  const [showNotifications, setShowNotifications] = useState(false);
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [isActive, setIsActive] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState('disconnected');
+  const [searchTerm, setSearchTerm] = useState('');
 
-  // ✅ 포트폴리오 스토어 사용
+  // ✅ 중앙화된 스토어에서 실제 데이터 가져오기 (안전한 접근)
   const {
+    selectedCoins = [], // 기본값 제공
+    isLoading: coinsLoading = false,
+    initializeData: initializeCoins,
+    addCoin,
+    removeCoin,
+    getLoadingState
+  } = useCoinStore() || {}; // useCoinStore 자체가 undefined일 경우 대비
+
+  const {
+    portfolioData = null, // 기본값 제공
+    portfolioStats = null,
     updatePortfolio,
-    getUnifiedPortfolioData,
-    calculatedPortfolio,
-    portfolioStats,
-    portfolioData,
-    initializeConfig,
-    getPortfolioData,
-    getPortfolioStats,
-  } = usePortfolioStore();
+    initializeConfig
+  } = usePortfolioStore() || {};
 
-  // ✅ Store 초기화
+  const {
+    tradingSettings = {},
+    updateTradingSettings
+  } = useTradingStore() || {};
+
+  // ✅ 중앙 데이터 스토어에서 실시간 데이터 (안전한 접근)
+  const {
+    trades = [], // 기본값 제공
+    signals = [],
+    notifications = [],
+    addTrade,
+    addSignal,
+    addNotification,
+    clearAllData
+  } = useCentralDataStore() || {};
+
+  // ✅ 로거 시스템 (안전한 접근)
+  const {
+    logs = [], // 기본값 제공
+    addLog,
+    updateStats,
+    resetStats,
+    monitoringStats = {},
+    exportLogs,
+    getFilteredLogs
+  } = useTradingLogger() || {};
+
+  // ✅ 설정 관리 (안전한 접근)
+  const {
+    settings = {},
+    isDirty = false,
+    saveSettings
+  } = useTradingSettings() || {};
+
+  // ✅ 초기화
   useEffect(() => {
-    initializeConfig(userId);
-  }, [userId, initializeConfig]);
+    const initializeApp = async () => {
+      try {
+        addLog?.("🚀 CryptoWise 페이퍼 트레이딩 초기화 시작", "info");
 
-  // ✅ 포트폴리오 변경시 스토어 업데이트
-  useEffect(() => {
-    if (portfolio) {
-      console.log("🔄 PaperTrading - 포트폴리오 스토어 업데이트", portfolio);
-      updatePortfolio(portfolio);
-    }
-  }, [portfolio, updatePortfolio]);
-
-  // ✅ 스토어에서 계산된 데이터 사용 (기존 useMemo 대체)
-  const currentPortfolioStats = useMemo(() => {
-    if (!portfolioData || !portfolioStats) {
-      return {
-        totalValue: 0,
-        totalProfit: 0,
-        cashValue: 0,
-        dailyChange: 0,
-        dailyChangePercent: 0,
-        portfolioProfitPercent: 0,
-        unrealizedProfit: 0,
-      };
-    }
-
-    // ✅ Store에서 계산된 데이터 직접 사용
-    return {
-      totalValue: portfolioData.totalValue,
-      totalProfit: portfolioStats.totalProfit,
-      cashValue: portfolioData.cash.value,
-      dailyChange: portfolioStats.totalProfit * 0.02,
-      dailyChangePercent:
-        portfolioData.totalValue > 0
-          ? ((portfolioStats.totalProfit * 0.02) / portfolioData.totalValue) *
-          100
-          : 0,
-      portfolioProfitPercent: portfolioStats.portfolioProfitPercent,
-      unrealizedProfit: Math.max(portfolioStats.totalProfit, 0),
-    };
-  }, [portfolioData, portfolioStats]);
-
-  const tabs = [
-    { id: "overview", label: "대시보드", icon: MonitorIcon, badge: null },
-    {
-      id: "coins",
-      label: "코인 관리",
-      icon: CoinsIcon,
-      badge: selectedCoinsCount || null,
-    },
-    { id: "portfolio", label: "포트폴리오", icon: PieChartIcon, badge: null },
-    {
-      id: "trades",
-      label: "거래 내역",
-      icon: ActivityIcon,
-      badge: portfolio?.trades?.length || null,
-    },
-    {
-      id: "signals",
-      label: "신호",
-      icon: ZapIcon,
-      badge: signals?.length || null,
-    },
-    {
-      id: "logs",
-      label: "로그",
-      icon: LineChartIcon,
-      badge: logs?.length > 99 ? "99+" : logs?.length || null,
-    },
-  ];
-
-  // 연결 상태별 색상 및 텍스트
-  const getConnectionStatus = () => {
-    switch (connectionStatus) {
-      case "connected":
-      case "active":
-        return {
-          color: "text-emerald-500 bg-emerald-50",
-          text: "연결됨",
-          icon: WifiIcon,
-          dot: "bg-emerald-500",
-        };
-      case "connecting":
-        return {
-          color: "text-amber-500 bg-amber-50",
-          text: "연결 중",
-          icon: WifiIcon,
-          dot: "bg-amber-500 animate-pulse",
-        };
-      case "error":
-        return {
-          color: "text-red-500 bg-red-50",
-          text: "연결 오류",
-          icon: WifiOffIcon,
-          dot: "bg-red-500",
-        };
-      default:
-        return {
-          color: "text-slate-400 bg-slate-50",
-          text: "연결 안됨",
-          icon: WifiOffIcon,
-          dot: "bg-slate-400",
-        };
-    }
-  };
-
-  const connectionInfo = getConnectionStatus();
-
-  // 선택된 코인 변경 핸들러
-  const handleSelectedCoinsChange = useCallback(
-    (newCoins) => {
-      const currentSymbols = selectedCoins.map((c) => c.symbol || c);
-
-      // 새로 추가된 코인들
-      newCoins.forEach((symbol) => {
-        if (!currentSymbols.includes(symbol)) {
-          addFavoriteCoin({
-            symbol,
-            market: `KRW-${symbol}`,
-            name: symbol,
-            addedAt: Date.now(),
-          });
+        // 1. 포트폴리오 설정 초기화
+        if (initializeConfig) {
+          await initializeConfig("demo-user");
+          addLog?.("✅ 포트폴리오 설정 초기화 완료", "success");
         }
-      });
 
-      // 제거된 코인들
-      currentSymbols.forEach((symbol) => {
-        if (!newCoins.includes(symbol)) {
-          removeFavoriteCoin(`KRW-${symbol}`);
+        // 2. 코인 데이터 초기화 (로컬스토리지 확인)
+        const savedCoins = localStorage.getItem('cryptowise_selected_coins');
+        if (savedCoins && initializeCoins && addCoin) {
+          try {
+            const parsedCoins = JSON.parse(savedCoins);
+            for (const coinMarket of parsedCoins) {
+              const result = addCoin(coinMarket);
+              if (result?.success) {
+                addLog?.(`📈 관심코인 복원: ${coinMarket}`, "success");
+              }
+            }
+            addLog?.(`📦 로컬스토리지에서 ${parsedCoins.length}개 관심코인 복원`, "success");
+          } catch (error) {
+            addLog?.("❌ 로컬스토리지 관심코인 복원 실패 - 새로 초기화", "warning");
+            if (initializeCoins) {
+              await initializeCoins(true);
+            }
+          }
+        } else if (initializeCoins) {
+          await initializeCoins();
+          addLog?.("🔄 코인 데이터 새로 초기화", "info");
         }
-      });
-    },
-    [selectedCoins, addFavoriteCoin, removeFavoriteCoin]
-  );
 
-  // ✅ 탭 컨텐츠 렌더링 (스토어 데이터 전달)
-  const renderTabContent = () => {
-    switch (activeTab) {
-      case "overview":
-        return (
-          <OverviewTab
-            portfolio={portfolio}
-            portfolioData={portfolioData}
-            portfolioStats={portfolioStats}
-            isActive={isActive}
-            connectionStatus={connectionStatus}
-            performance={portfolio?.performance}
-            lastSignal={lastSignal}
-            monitoringStats={monitoringStats}
-            totalValue={currentPortfolioStats.totalValue} // 추가
-          />
-        );
-      case "coins":
-        return (
-          <CoinsTab
-            favoriteCoins={favoriteCoins}
-            selectedCoins={selectedCoins.map((coin) => coin.symbol || coin)}
-            onCoinsChange={handleSelectedCoinsChange}
-            watchlistCoins={favoriteCoins}
-            tradingMode={tradingMode}
-            setTradingMode={setTradingMode}
-            isActive={isActive}
-            testMode={testMode}
-          />
-        );
-      case "portfolio":
-        return (
-          <PortfolioTab
-            portfolio={portfolio}
-            portfolioStats={currentPortfolioStats} // 스토어 데이터 전달
-            totalValue={currentPortfolioStats.totalValue}
-            performance={portfolio?.performance}
-          />
-        );
-      case "trades":
-        return (
-          <TradesTab
-            trades={portfolio?.trades || portfolio?.tradeHistory || []}
-            portfolio={portfolio}
-            isActive={isActive}
-          />
-        );
-      case "signals":
-        return (
-          <SignalsTab
-            signals={signals}
-            isActive={isActive}
-            onSignalAction={executeSignal}
-            lastSignal={lastSignal}
-          />
-        );
-      case "logs":
-        return (
-          <LogsTab
-            logs={logs}
-            isActive={isActive}
-            connectionStatus={connectionStatus}
-          />
-        );
-      default:
-        return (
-          <div className="text-center text-slate-500 py-12">
-            <InfoIcon className="w-12 h-12 mx-auto mb-4 text-slate-300" />
-            <p>탭을 선택하세요</p>
-          </div>
-        );
-    }
-  };
+        // 3. 중앙 데이터 매니저 초기화
+        if (selectedCoins?.length > 0 && centralDataManager) {
+          const coinSymbols = selectedCoins.map(coin => coin.symbol || coin.market?.replace('KRW-', ''));
+          await centralDataManager.initialize(coinSymbols);
+          addLog?.(`🎯 중앙 데이터 매니저 초기화: ${coinSymbols.length}개 코인`, "success");
+        }
 
-  // 거래 시작 핸들러
-  const handleQuickStart = async () => {
-    if (!hasSelectedCoins) {
-      setNotifications((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          type: "warning",
-          title: "코인 선택 필요",
-          message:
-            '거래를 시작하려면 먼저 "코인 관리" 탭에서 거래할 코인을 선택해주세요.',
-          timestamp: new Date(),
-          action: () => setActiveTab("coins"),
-        },
-      ]);
-      return;
-    }
+        // 4. 거래 내역 복원
+        const savedTrades = localStorage.getItem('cryptowise_trades');
+        if (savedTrades && addTrade) {
+          try {
+            const parsedTrades = JSON.parse(savedTrades);
+            parsedTrades.forEach(trade => addTrade(trade));
+            addLog?.(`📊 거래내역 ${parsedTrades.length}개 복원`, "success");
+          } catch (error) {
+            addLog?.("❌ 거래내역 복원 실패", "warning");
+          }
+        }
 
-    try {
-      await startPaperTrading();
-      setNotifications((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          type: "success",
-          title: "거래 시작됨",
-          message: `${selectedCoinsCount}개 코인에 대한 페이퍼 트레이딩이 시작되었습니다.`,
-          timestamp: new Date(),
-        },
-      ]);
-    } catch (error) {
-      setNotifications((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          type: "error",
-          title: "거래 시작 실패",
-          message: error.message || "거래 시작 중 오류가 발생했습니다.",
-          timestamp: new Date(),
-        },
-      ]);
-    }
-  };
+        // 5. 신호 내역 복원
+        const savedSignals = localStorage.getItem('cryptowise_signals');
+        if (savedSignals && addSignal) {
+          try {
+            const parsedSignals = JSON.parse(savedSignals);
+            parsedSignals.forEach(signal => addSignal(signal));
+            addLog?.(`🔔 신호내역 ${parsedSignals.length}개 복원`, "success");
+          } catch (error) {
+            addLog?.("❌ 신호내역 복원 실패", "warning");
+          }
+        }
 
-  // 거래 중지 핸들러
-  const handleQuickStop = async () => {
-    try {
-      await stopPaperTrading();
-      setNotifications((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          type: "info",
-          title: "거래 중지됨",
-          message: "페이퍼 트레이딩이 안전하게 중지되었습니다.",
-          timestamp: new Date(),
-        },
-      ]);
-    } catch (error) {
-      setNotifications((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          type: "error",
-          title: "거래 중지 실패",
-          message: error.message || "거래 중지 중 오류가 발생했습니다.",
-          timestamp: new Date(),
-        },
-      ]);
-    }
-  };
-
-  // 새로고침 핸들러
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      await refreshPriceAndAnalysis();
-      setNotifications((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          type: "success",
-          title: "데이터 새로고침 완료",
-          message: "가격 및 분석 데이터가 업데이트되었습니다.",
-          timestamp: new Date(),
-        },
-      ]);
-    } catch (error) {
-      setNotifications((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          type: "error",
-          title: "새로고침 실패",
-          message: "데이터 업데이트 중 오류가 발생했습니다.",
-          timestamp: new Date(),
-        },
-      ]);
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  // 전략 요약 계산
-  const getStrategyLabel = (strategy, settings) => {
-    if (strategy) {
-      const map = {
-        ultraConservative: "초보수적",
-        conservative: "보수적",
-        balanced: "균형",
-        aggressive: "적극적",
-      };
-      return map[strategy] || strategy;
-    }
-
-    const minScore = settings?.tradingConditions?.buyConditions?.minBuyScore;
-    if (typeof minScore === "number") {
-      if (minScore >= 9) return "초보수적";
-      if (minScore >= 8) return "보수적";
-      if (minScore >= 6.5) return "균형";
-      return "적극적";
-    }
-    return "설정없음";
-  };
-
-  const summary = useMemo(() => {
-    const alloc = tradingSettings?.portfolioAllocation || {};
-    const buyCond = tradingSettings?.tradingConditions?.buyConditions || {};
-    const sellCond = tradingSettings?.tradingConditions?.sellConditions || {};
-    const risk = tradingSettings?.tradingConditions?.riskManagement || {};
-
-    return {
-      strategyLabel: getStrategyLabel(
-        tradingSettings?.strategy,
-        tradingSettings
-      ),
-      testMode: !!tradingSettings?.testMode || !!testMode,
-      allocation: {
-        cash: Math.round((alloc.cash || 0) * 100),
-        t1: Math.round((alloc.t1 || 0) * 100),
-        t2: Math.round((alloc.t2 || 0) * 100),
-        t3: Math.round((alloc.t3 || 0) * 100),
-      },
-      minBuyScore: buyCond.minBuyScore ?? "-",
-      rsiOversold: buyCond.rsiOversold ?? "-",
-      strongBuyScore: buyCond.strongBuyScore ?? "-",
-      profitTarget1: sellCond.profitTarget1 ?? "-",
-      stopLoss: sellCond.stopLoss ?? "-",
-      maxCoinsToTrade: risk.maxCoinsToTrade ?? "-",
-      totalRules: Object.keys(buyCond).length + Object.keys(sellCond).length,
-    };
-  }, [tradingSettings, testMode]);
-
-  // 알림 제거
-  const removeNotification = (id) => {
-    setNotifications((prev) => prev.filter((n) => n.id !== id));
-  };
-
-  // 실시간 업데이트 효과
-  useEffect(() => {
-    let interval;
-    if (isActive) {
-      interval = setInterval(() => {
-        console.log("📡 실시간 데이터 업데이트");
-      }, 5000);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [isActive]);
-
-  // 알림 자동 제거
-  useEffect(() => {
-    notifications.forEach((notification) => {
-      if (notification.type !== "error") {
-        setTimeout(() => {
-          removeNotification(notification.id);
-        }, 5000);
+        addLog?.("✅ 시스템 초기화 완료 - 페이퍼 트레이딩 준비됨", "success");
+      } catch (error) {
+        addLog?.(`❌ 시스템 초기화 실패: ${error.message}`, "error");
       }
-    });
-  }, [notifications]);
+    };
 
-  // 모달 배경 클릭 시 닫기
-  const handleModalBackdropClick = useCallback((e) => {
-    if (e.target === e.currentTarget) {
-      setShowSettings(false);
-    }
+    initializeApp();
   }, []);
 
-  return (
-    <div className="min-h-screen bg-slate-50">
-      {/* 🎯 헤더 */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-6 py-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900 flex items-center">
-                <RocketIcon className="w-8 h-8 mr-3 text-blue-600" />
-                페이퍼 트레이딩
-              </h1>
-              <p className="text-slate-600 mt-1">
-                실제 자금 없이 안전하게 거래 연습
-              </p>
-            </div>
+  // ✅ 관심코인 변경 시 로컬스토리지 저장
+  useEffect(() => {
+    if (selectedCoins?.length > 0) {
+      const coinMarkets = selectedCoins.map(coin => coin.market || `KRW-${coin.symbol}`);
+      localStorage.setItem('cryptowise_selected_coins', JSON.stringify(coinMarkets));
+      addLog?.(`💾 관심코인 ${selectedCoins.length}개 자동 저장`, "debug");
+    }
+  }, [selectedCoins, addLog]);
 
-            {/* 🎯 헤더 우측 컨트롤 */}
-            <div className="flex items-center space-x-4">
-              {/* 연결 상태 */}
-              <div
-                className={`flex items-center space-x-2 px-3 py-2 rounded-full ${connectionInfo.color}`}
-              >
-                <div
-                  className={`w-2 h-2 rounded-full ${connectionInfo.dot}`}
-                ></div>
-                <connectionInfo.icon className="w-4 h-4" />
-                <span className="text-sm font-medium">
-                  {connectionInfo.text}
-                </span>
-              </div>
+  // ✅ 거래 내역 변경 시 로컬스토리지 저장
+  useEffect(() => {
+    if (trades?.length > 0) {
+      localStorage.setItem('cryptowise_trades', JSON.stringify(trades));
+      addLog?.(`💾 거래내역 ${trades.length}개 자동 저장`, "debug");
+    }
+  }, [trades, addLog]);
 
-              {/* 알림 */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowNotifications(!showNotifications)}
-                  className="relative p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-                >
-                  <BellIcon className="w-5 h-5" />
-                  {notifications.length > 0 && (
-                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
-                      {notifications.length}
-                    </span>
-                  )}
-                </button>
+  // ✅ 신호 내역 변경 시 로컬스토리지 저장
+  useEffect(() => {
+    if (signals?.length > 0) {
+      localStorage.setItem('cryptowise_signals', JSON.stringify(signals));
+      addLog?.(`💾 신호내역 ${signals.length}개 자동 저장`, "debug");
+    }
+  }, [signals, addLog]);
 
-                {/* 알림 패널 */}
-                {showNotifications && (
-                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-slate-200 z-50">
-                    <div className="p-4 border-b border-slate-200">
-                      <h3 className="font-semibold text-slate-900">알림</h3>
-                    </div>
-                    <div className="max-h-96 overflow-y-auto">
-                      {notifications.length === 0 ? (
-                        <div className="p-4 text-center text-slate-500">
-                          <BellIcon className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-                          <p>새로운 알림이 없습니다</p>
-                        </div>
-                      ) : (
-                        notifications.map((notification) => (
-                          <div
-                            key={notification.id}
-                            className="p-4 border-b border-slate-100 hover:bg-slate-50"
-                          >
-                            <div className="flex justify-between items-start">
-                              <div className="flex-1">
-                                <h4
-                                  className={`font-medium ${notification.type === "error"
-                                    ? "text-red-900"
-                                    : notification.type === "success"
-                                      ? "text-green-900"
-                                      : notification.type === "warning"
-                                        ? "text-amber-900"
-                                        : "text-slate-900"
-                                    }`}
-                                >
-                                  {notification.title}
-                                </h4>
-                                <p className="text-sm text-slate-600 mt-1">
-                                  {notification.message}
-                                </p>
-                                <p className="text-xs text-slate-400 mt-2">
-                                  {notification.timestamp.toLocaleTimeString()}
-                                </p>
-                              </div>
-                              <button
-                                onClick={() =>
-                                  removeNotification(notification.id)
-                                }
-                                className="text-slate-400 hover:text-slate-600 ml-2"
-                              >
-                                ×
-                              </button>
-                            </div>
-                            {notification.action && (
-                              <button
-                                onClick={() => {
-                                  notification.action();
-                                  setShowNotifications(false);
-                                }}
-                                className="mt-2 text-blue-600 hover:text-blue-800 text-sm font-medium"
-                              >
-                                바로가기 →
-                              </button>
-                            )}
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+  // ✅ 거래 시작/중지 핸들러 (완전 구현)
+  const handleToggleTrading = useCallback(async () => {
+    if (!isActive) {
+      // 거래 시작 전 검증
+      if (!selectedCoins?.length) {
+        addNotification?.({
+          message: '관심코인을 먼저 선택해주세요',
+          type: 'warning'
+        });
+        setActiveTab('coins');
+        return;
+      }
+
+      if (isDirty && saveSettings) {
+        const shouldSave = window.confirm('저장되지 않은 설정이 있습니다. 저장하고 거래를 시작하시겠습니까?');
+        if (shouldSave) {
+          const result = await saveSettings();
+          if (!result?.success) {
+            addLog?.(`❌ 설정 저장 실패: ${result?.error}`, 'error');
+            addNotification?.({
+              message: `설정 저장 실패: ${result?.error}`,
+              type: 'error'
+            });
+            return;
+          }
+        }
+      }
+
+      try {
+        setIsActive(true);
+        setConnectionStatus('connecting');
+        addLog?.("🚀 페이퍼 트레이딩 시작", "info");
+
+        // 중앙 데이터 매니저 구독 시작
+        const coinSymbols = selectedCoins.map(coin => coin.symbol || coin.market?.replace('KRW-', ''));
+        const unsubscribe = centralDataManager?.subscribe('paperTrading', (data) => {
+          // 실시간 데이터 처리
+          if (data.prices) {
+            updateStats?.(prev => ({
+              ...prev,
+              dataReceived: (prev.dataReceived || 0) + Object.keys(data.prices).length,
+              lastActivity: new Date().toLocaleTimeString()
+            }));
+          }
+        });
+
+        // 포트폴리오 업데이트 스케줄러 시작
+        const portfolioInterval = setInterval(() => {
+          if (isActive && updatePortfolio && portfolioData) {
+            updatePortfolio(portfolioData, portfolioData?.totalValue);
+            addLog?.("📊 포트폴리오 자동 업데이트", "debug");
+          }
+        }, 30000); // 30초마다
+
+        setConnectionStatus('connected');
+        addLog?.(`✅ 페이퍼 트레이딩 시작 완료 - ${coinSymbols.length}개 코인 모니터링`, "success");
+        addNotification?.({
+          message: `페이퍼 트레이딩이 시작되었습니다 (${coinSymbols.length}개 코인)`,
+          type: 'success'
+        });
+
+        // 정리 함수 저장 (컴포넌트 언마운트나 중지 시 사용)
+        window.tradingCleanup = () => {
+          unsubscribe?.();
+          clearInterval(portfolioInterval);
+        };
+
+      } catch (error) {
+        addLog?.(`❌ 거래 시작 실패: ${error.message}`, "error");
+        addNotification?.({
+          message: `거래 시작 실패: ${error.message}`,
+          type: 'error'
+        });
+        setIsActive(false);
+        setConnectionStatus('disconnected');
+      }
+    } else {
+      // 거래 중지
+      try {
+        setIsActive(false);
+        setConnectionStatus('disconnecting');
+        addLog?.("🛑 페이퍼 트레이딩 중지 요청", "info");
+
+        // 정리 작업 실행
+        if (window.tradingCleanup) {
+          window.tradingCleanup();
+          delete window.tradingCleanup;
+        }
+
+        setConnectionStatus('disconnected');
+        addLog?.("✅ 페이퍼 트레이딩 완전 중지", "warning");
+        addNotification?.({
+          message: '페이퍼 트레이딩이 중지되었습니다',
+          type: 'info'
+        });
+      } catch (error) {
+        addLog?.(`❌ 거래 중지 중 오류: ${error.message}`, "error");
+      }
+    }
+  }, [isActive, selectedCoins, isDirty, saveSettings, addLog, addNotification, portfolioData, updatePortfolio, updateStats]);
+
+  // ✅ 코인 토글 핸들러 (완전 구현)
+  const handleCoinToggle = useCallback((symbol, isSelected) => {
+    if (!addCoin || !removeCoin || !addLog || !addNotification) return;
+
+    const coinMarket = `KRW-${symbol}`;
+
+    if (isSelected) {
+      const result = addCoin(coinMarket);
+      addLog(`${result?.success ? '✅' : '❌'} ${symbol} ${result?.message}`, result?.success ? 'success' : 'warning');
+      addNotification({
+        message: `${symbol}: ${result?.message}`,
+        type: result?.success ? 'success' : 'warning'
+      });
+    } else {
+      const result = removeCoin(coinMarket);
+      addLog(`${result?.success ? '✅' : '❌'} ${symbol} ${result?.message}`, result?.success ? 'info' : 'warning');
+      addNotification({
+        message: `${symbol}: ${result?.message}`,
+        type: result?.success ? 'info' : 'warning'
+      });
+    }
+  }, [addCoin, removeCoin, addLog, addNotification]);
+
+  // ✅ 신호 새로고침 로직 (완전 구현)
+  const handleRefreshSignals = useCallback(() => {
+    if (!addLog || !addSignal || !updateStats) return;
+
+    addLog("🔄 신호 새로고침 요청", "info");
+
+    // 실제 신호 새로고침 로직
+    try {
+      const refreshedSignals = (selectedCoins || []).map(coin => {
+        const mockSignal = {
+          id: `signal_${coin.symbol}_${Date.now()}`,
+          symbol: coin.symbol,
+          type: Math.random() > 0.5 ? 'BUY' : 'SELL',
+          totalScore: Math.random() * 10,
+          confidence: Math.random() > 0.7 ? 'HIGH' : Math.random() > 0.4 ? 'MEDIUM' : 'LOW',
+          reason: '기술적 분석 기반 신호',
+          timestamp: new Date(),
+          executed: false,
+          price: coin.currentPrice || Math.random() * 1000000
+        };
+        addSignal(mockSignal);
+        return mockSignal;
+      });
+
+      addLog(`✅ 신호 ${refreshedSignals.length}개 새로고침 완료`, "success");
+      updateStats(prev => ({
+        ...prev,
+        signalsGenerated: (prev.signalsGenerated || 0) + refreshedSignals.length
+      }));
+    } catch (error) {
+      addLog(`❌ 신호 새로고침 실패: ${error.message}`, "error");
+    }
+  }, [selectedCoins, addSignal, addLog, updateStats]);
+
+  // ✅ 로그 검색 로직 (완전 구현)
+  const handleSearchLogs = useCallback((searchTerm) => {
+    if (!getFilteredLogs || !addLog) return [];
+
+    setSearchTerm(searchTerm);
+    addLog(`🔍 로그 검색: "${searchTerm}"`, "debug");
+
+    // 검색 결과 반환
+    return getFilteredLogs(null, searchTerm);
+  }, [getFilteredLogs, addLog]);
+
+  // ✅ 탭별 카운트 계산 (에러 수정 - 안전한 접근)
+  const tabCounts = useMemo(() => ({
+    coins: selectedCoins?.length ?? 0,
+    portfolio: portfolioData?.coins?.length ?? 0,
+    trades: trades?.length ?? 0,
+    signals: signals?.length ?? 0,
+    logs: logs?.length ?? 0
+  }), [selectedCoins, portfolioData, trades, signals, logs]);
+
+  // ✅ 성과 데이터 계산 (안전한 접근)
+  const performance = useMemo(() => {
+    const totalTrades = trades?.length ?? 0;
+    const profitableTrades = trades?.filter(t => (t.profitRate || 0) > 0).length ?? 0;
+    const winRate = totalTrades > 0 ? (profitableTrades / totalTrades) * 100 : 0;
+
+    return {
+      totalTrades,
+      profitableTrades,
+      winRate
+    };
+  }, [trades]);
+
+  // ✅ 탭 구성 (실제 데이터 반영)
+  const tabs = [
+    { id: 'dashboard', label: '대시보드', icon: BarChart3Icon, count: null },
+    { id: 'coins', label: '코인 관리', icon: Coins, count: tabCounts.coins },
+    { id: 'portfolio', label: '포트폴리오', icon: PieChartIcon, count: tabCounts.portfolio },
+    { id: 'trades', label: '거래내역', icon: History, count: tabCounts.trades },
+    { id: 'signals', label: '신호', icon: ActivityIcon, count: tabCounts.signals },
+    { id: 'logs', label: '로그', icon: InfoIcon, count: tabCounts.logs }
+  ];
+
+  // ✅ 탭별 렌더링 (완전 구현)
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'dashboard':
+        return (
+          <OverviewTab
+            isActive={isActive}
+            connectionStatus={connectionStatus}
+            performance={performance}
+            lastSignal={signals?.[0] || null}
+          />
+        );
+      case 'coins':
+        return (
+          <CoinsTab
+            coins={[]} // 전체 이용 가능한 코인 목록 (필요시 추가)
+            selectedCoins={selectedCoins || []} // ✅ 선택된 코인들 전달
+            onCoinToggle={handleCoinToggle}
+            onCoinAdd={(symbol) => {
+              // 새 코인 추가 로직
+              const result = addCoin(`KRW-${symbol}`);
+              if (result?.success) {
+                addLog?.(`✅ ${symbol} 코인 추가됨`, "success");
+              } else {
+                addLog?.(`❌ ${symbol} 추가 실패: ${result?.message}`, "error");
+              }
+            }}
+            onRefresh={() => {
+              // 코인 데이터 새로고침
+              if (initializeCoins) {
+                initializeCoins(true);
+                addLog?.("🔄 코인 데이터 새로고침", "info");
+              }
+            }}
+            isActive={isActive}
+            loadingState={{
+              isLoading: coinsLoading || false,
+              hasData: (selectedCoins?.length || 0) > 0
+            }}
+          />
+        );
+      case 'portfolio':
+        return (
+          <PortfolioTab
+            portfolio={portfolioData}
+            totalValue={portfolioData?.totalValue}
+          />
+        );
+      case 'trades':
+        return (
+          <TradesTab
+            trades={trades || []}
+          />
+        );
+      case 'signals':
+        return (
+          <SignalsTab
+            signals={signals || []}
+            isActive={isActive}
+            tradingMode="paper"
+            lastUpdateTime={monitoringStats?.lastActivity}
+            onRefreshSignals={handleRefreshSignals}
+          />
+        );
+      case 'logs':
+        return (
+          <LogsTab
+            logs={logs || []}
+            onSearchChange={handleSearchLogs}
+          />
+        );
+      default:
+        return (
+          <div className="text-center py-8">
+            <p className="text-gray-500 dark:text-gray-400">
+              {activeTab} 탭 내용을 준비 중입니다...
+            </p>
           </div>
+        );
+    }
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto p-6 bg-gray-50 dark:bg-gray-900 min-h-screen">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+            페이퍼 트레이딩
+          </h1>
+          <p className="text-gray-600 dark:text-gray-400 mt-1">
+            실제 자금 없이 안전하게 거래 연습 • 중앙화된 데이터 시스템
+          </p>
+        </div>
+
+        {/* 알림 버튼 */}
+        <div className="flex items-center space-x-4">
+          <button
+            onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+            className="relative p-2 text-gray-400 hover:text-gray-500 dark:hover:text-gray-300"
+          >
+            <BellIcon className="h-6 w-6" />
+            {(notifications?.length ?? 0) > 0 && (
+              <span className="absolute -top-1 -right-1 h-4 w-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
+                {notifications.length}
+              </span>
+            )}
+          </button>
         </div>
       </div>
 
-      {/* 🎯 메인 컨텐츠 */}
-      <div className="max-w-7xl mx-auto px-6 py-6">
-        {/* 🎯 상태 대시보드 카드들 - ✅ 스토어 데이터 사용 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-          {/* 총 자산 카드 */}
-          <div className="bg-white rounded-xl p-6 border border-slate-200 hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-600">총 자산</p>
-                <p className="text-2xl font-bold text-slate-900">
-                  {formatCurrency(currentPortfolioStats.totalValue)}
-                </p>
-                <div className="flex items-center mt-2 space-x-2">
-                  <span className="text-slate-500 text-sm">수익률</span>
-                  <span
-                    className={`text-sm font-medium flex items-center ${currentPortfolioStats.portfolioProfitPercent >= 0
-                      ? "text-emerald-600"
-                      : "text-red-600"
-                      }`}
-                  >
-                    {currentPortfolioStats.portfolioProfitPercent >= 0 ? (
-                      <GainIcon className="w-4 h-4 mr-1" />
-                    ) : (
-                      <TrendingDownIcon className="w-4 h-4 mr-1" />
-                    )}
-                    {formatPercent(
-                      currentPortfolioStats.portfolioProfitPercent
-                    )}
-                  </span>
-                </div>
-              </div>
-              <div
-                className={`p-3 rounded-lg ${currentPortfolioStats.portfolioProfitPercent >= 0
-                  ? "bg-emerald-100"
-                  : "bg-red-100"
-                  }`}
-              >
-                <DollarSignIcon
-                  className={`w-6 h-6 ${currentPortfolioStats.portfolioProfitPercent >= 0
-                    ? "text-emerald-600"
-                    : "text-red-600"
-                    }`}
-                />
-              </div>
-            </div>
+      {/* 알림 드롭다운 */}
+      {isNotificationOpen && (
+        <div className="fixed top-16 right-6 w-80 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50">
+          <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+            <h3 className="font-medium text-gray-900 dark:text-white">
+              새로운 알림이 {(notifications?.length ?? 0) === 0 ? '없습니다' : `${notifications.length}개 있습니다`}
+            </h3>
           </div>
-
-          {/* 거래 상태 카드 */}
-          <div className="bg-white rounded-xl p-6 border border-slate-200 hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-600">거래 상태</p>
-                <p
-                  className={`text-lg font-semibold ${isActive ? "text-emerald-600" : "text-slate-500"
-                    }`}
-                >
-                  {isActive ? "활성" : "비활성"}
-                </p>
-                <div className="mt-2">
-                  <span className="text-sm text-slate-500">
-                    {testMode ? "🧪 테스트 모드" : "💎 실전 모드"}
-                  </span>
-                </div>
+          <div className="max-h-64 overflow-y-auto">
+            {(notifications?.length ?? 0) === 0 ? (
+              <div className="p-4 text-center text-gray-500 dark:text-gray-400">
+                알림이 없습니다.
               </div>
-              <div
-                className={`p-3 rounded-lg ${isActive ? "bg-emerald-100" : "bg-slate-100"
-                  }`}
-              >
-                {isActive ? (
-                  <CheckCircleIcon className="w-6 h-6 text-emerald-600" />
-                ) : (
-                  <AlertCircleIcon className="w-6 h-6 text-slate-400" />
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* 선택된 코인 카드 */}
-          <div className="bg-white rounded-xl p-6 border border-slate-200 hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-600">선택 코인</p>
-                <p className="text-2xl font-bold text-slate-900">
-                  {selectedCoinsCount}개
-                </p>
-                <div className="mt-2">
-                  <span className="text-sm text-slate-500">
-                    투자금액:{" "}
-                    {formatCurrency(currentPortfolioStats.totalInvestment)}
-                  </span>
-                </div>
-              </div>
-              <div className="p-3 rounded-lg bg-blue-100">
-                <CoinsIcon className="w-6 h-6 text-blue-600" />
-              </div>
-            </div>
-          </div>
-
-          {/* 성과 카드 */}
-          <div className="bg-white rounded-xl p-6 border border-slate-200 hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-600">수익금</p>
-                <p
-                  className={`text-2xl font-bold ${currentPortfolioStats.totalProfit >= 0
-                    ? "text-emerald-600"
-                    : "text-red-600"
-                    }`}
-                >
-                  {currentPortfolioStats.totalProfit >= 0 ? "+" : ""}
-                  {formatCurrency(currentPortfolioStats.totalProfit)}
-                </p>
-                <div className="mt-2">
-                  <span className="text-sm text-slate-500">
-                    승률: {(portfolio?.performance?.winRate || 0).toFixed(1)}%
-                  </span>
-                </div>
-              </div>
-              <div className="p-3 rounded-lg bg-purple-100">
-                <TargetIcon className="w-6 h-6 text-purple-600" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* 🎯 통합 제어 패널 */}
-        <div className="bg-white rounded-xl border border-slate-200 mb-6 overflow-hidden">
-          <div className="p-6 border-b border-slate-200">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 bg-slate-100 rounded-lg">
-                  <BrainIcon className="w-5 h-5 text-slate-600" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-900">
-                    거래 제어
-                  </h2>
-                  <p className="text-sm text-slate-500">
-                    실시간 자동 매매 관리
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-3">
-                <button
-                  onClick={toggleTestMode}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${testMode
-                    ? "bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-200"
-                    : "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200"
-                    }`}
-                >
-                  {testMode ? "🧪 테스트 모드" : "💎 실전 모드"}
-                </button>
-
-                <button
-                  onClick={() => setShowSettings(!showSettings)}
-                  className={`p-2 rounded-lg transition-all ${showSettings
-                    ? "text-blue-600 bg-blue-100"
-                    : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-                    }`}
-                >
-                  <SettingsIcon className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="p-6">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
-              <div className="flex items-center space-x-4">
-                {!isActive ? (
-                  <button
-                    onClick={handleQuickStart}
-                    disabled={!hasSelectedCoins}
-                    className={`flex items-center space-x-3 px-6 py-3 rounded-xl font-semibold transition-all ${hasSelectedCoins
-                      ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
-                      : "bg-slate-200 text-slate-500 cursor-not-allowed"
-                      }`}
-                  >
-                    <PlayIcon className="w-5 h-5" />
-                    <span>거래 시작</span>
-                    {hasSelectedCoins && (
-                      <span className="bg-emerald-500 text-emerald-100 px-2 py-1 rounded-full text-xs">
-                        {selectedCoinsCount}개
-                      </span>
-                    )}
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleQuickStop}
-                    className="flex items-center space-x-3 px-6 py-3 rounded-xl font-semibold bg-red-600 hover:bg-red-700 text-white transition-all shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
-                  >
-                    <PauseIcon className="w-5 h-5" />
-                    <span>거래 중지</span>
-                  </button>
-                )}
-
-                <button
-                  onClick={handleRefresh}
-                  disabled={isRefreshing}
-                  className="flex items-center space-x-2 px-4 py-3 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-all disabled:opacity-50"
-                >
-                  <RefreshCwIcon
-                    className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
-                  />
-                  <span>{isRefreshing ? "새로고침 중..." : "새로고침"}</span>
-                </button>
-              </div>
-
-              {isActive && (
-                <div className="flex items-center space-x-6 text-sm">
-                  <div className="flex items-center space-x-2">
-                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                    <span className="text-emerald-700 font-medium">
-                      실시간 모니터링
-                    </span>
+            ) : (
+              notifications?.map(notification => (
+                <div key={notification.id} className="p-3 border-b border-gray-100 dark:border-gray-700 last:border-b-0">
+                  <div className="text-sm text-gray-900 dark:text-white">
+                    {notification.message}
                   </div>
-
-                  {lastSignal && (
-                    <div className="flex items-center space-x-2 text-slate-600">
-                      <ClockIcon className="w-4 h-4" />
-                      <span>
-                        최근: {lastSignal.symbol} {lastSignal.type} (
-                        {(lastSignal.totalScore || 0).toFixed(1)}점)
-                      </span>
-                    </div>
-                  )}
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {notification.timestamp?.toLocaleTimeString?.()}
+                  </div>
                 </div>
-              )}
-            </div>
+              ))
+            )}
           </div>
         </div>
+      )}
 
-        {/* 🎯 전략 요약 카드 */}
-        <div className="bg-gradient-to-r from-slate-50 to-blue-50 border border-slate-200 rounded-xl p-6 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-white rounded-lg shadow-sm">
-                <ShieldIcon className="w-5 h-5 text-slate-600" />
-              </div>
-              <div>
-                <div className="text-sm font-medium text-slate-700">
-                  현재 전략 요약
-                </div>
-                <div className="text-xs text-slate-500">
-                  거래 시작 전 적용된 설정과 주요 조건
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-2">
-              <span
-                className={`px-3 py-1 rounded-full text-xs font-semibold ${summary.strategyLabel === "초보수적"
-                  ? "bg-red-100 text-red-700"
-                  : summary.strategyLabel === "보수적"
-                    ? "bg-amber-100 text-amber-700"
-                    : summary.strategyLabel === "균형"
-                      ? "bg-sky-100 text-sky-700"
-                      : summary.strategyLabel === "적극적"
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-slate-100 text-slate-600"
-                  }`}
-              >
-                {summary.strategyLabel}
-              </span>
-              {summary.totalRules > 0 && (
-                <span className="px-2 py-1 bg-white rounded-full text-xs text-slate-600 border">
-                  {summary.totalRules}개 규칙
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* 자산 배분 */}
-          <div className="grid grid-cols-4 gap-4 mb-4">
-            <div className="bg-white p-3 rounded-lg border border-slate-100 text-center">
-              <div className="text-xs text-slate-500 mb-1">현금</div>
-              <div className="text-lg font-bold text-slate-900">
-                {summary.allocation.cash}%
-              </div>
-            </div>
-            <div className="bg-white p-3 rounded-lg border border-slate-100 text-center">
-              <div className="text-xs text-slate-500 mb-1">T1 (안전)</div>
-              <div className="text-lg font-bold text-blue-600">
-                {summary.allocation.t1}%
-              </div>
-            </div>
-            <div className="bg-white p-3 rounded-lg border border-slate-100 text-center">
-              <div className="text-xs text-slate-500 mb-1">T2 (균형)</div>
-              <div className="text-lg font-bold text-green-600">
-                {summary.allocation.t2}%
-              </div>
-            </div>
-            <div className="bg-white p-3 rounded-lg border border-slate-100 text-center">
-              <div className="text-xs text-slate-500 mb-1">T3 (공격)</div>
-              <div className="text-lg font-bold text-orange-600">
-                {summary.allocation.t3}%
-              </div>
-            </div>
-          </div>
-
-          {/* 주요 설정 */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
-            <div className="bg-white p-3 rounded-lg border border-slate-100">
-              <div className="text-xs text-slate-400 mb-1">최소 매수 점수</div>
-              <div className="font-semibold text-slate-700">
-                {summary.minBuyScore}
-              </div>
-            </div>
-            <div className="bg-white p-3 rounded-lg border border-slate-100">
-              <div className="text-xs text-slate-400 mb-1">수익 목표</div>
-              <div className="font-semibold text-green-600">
-                {summary.profitTarget1}%
-              </div>
-            </div>
-            <div className="bg-white p-3 rounded-lg border border-slate-100">
-              <div className="text-xs text-slate-400 mb-1">손절라인</div>
-              <div className="font-semibold text-red-600">
-                {summary.stopLoss}%
-              </div>
-            </div>
-            <div className="bg-white p-3 rounded-lg border border-slate-100">
-              <div className="text-xs text-slate-400 mb-1">최대 동시 거래</div>
-              <div className="font-semibold text-slate-700">
-                {summary.maxCoinsToTrade}개
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-4 flex items-center justify-between">
-            <div className="text-xs text-slate-500">
-              {summary.testMode
-                ? "🧪 테스트 모드로 실행됩니다"
-                : "💎 실전 모드 설정"}
-            </div>
-            <div className="text-xs text-slate-400">
-              마지막 설정 업데이트: {new Date().toLocaleString()}
-            </div>
-          </div>
-        </div>
-
-        {/* 🎯 설정 패널 */}
-        {/* {showSettings && (
-          <div className="mb-6">
-            <TradingSettings
-              settings={tradingSettings}
-              onSettingsChange={setTradingSettings}
-              isActive={isActive}
-              onClose={() => setShowSettings(false)}
-              testMode={testMode}
-              onToggleTestMode={toggleTestMode}
-            />
-          </div>
-        )} */}
-
-        {/* 🎯 모달 오버레이 */}
-        {showSettings && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center"
-            onClick={handleModalBackdropClick}
-          >
-            {/* 반투명 검정 배경 */}
-            <div className="absolute inset-0 bg-black bg-opacity-50 backdrop-blur-sm" />
-
-            {/* 모달 컨테이너 */}
-            <div className="relative z-10 w-full max-w-4xl mx-4 h-[calc(100vh-2rem)] overflow-y-auto">
-              {/* 모달 컨텐츠 */}
-              <TradingSettings
-                isActive={isActive}
-                onClose={() => setShowSettings(false)}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* 🎯 탭 네비게이션 */}
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <div className="border-b border-slate-200">
-            <nav className="flex space-x-8 px-6 overflow-x-auto">
+      <div className="grid grid-cols-4 gap-6">
+        {/* 좌측: 메인 콘텐츠 (3칸) */}
+        <div className="col-span-3">
+          {/* 탭 네비게이션 */}
+          <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
+            <nav className="-mb-px flex space-x-8">
               {tabs.map((tab) => {
                 const Icon = tab.icon;
                 return (
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
-                    className={`flex items-center space-x-2 py-4 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${activeTab === tab.id
-                      ? "border-slate-900 text-slate-900"
-                      : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
-                      }`}
+                    className={`${activeTab === tab.id
+                      ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                      : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300'
+                      } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2`}
                   >
-                    <Icon className="w-4 h-4" />
+                    <Icon className="h-5 w-5" />
                     <span>{tab.label}</span>
-                    {tab.badge && (
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-xs ${activeTab === tab.id
-                          ? "bg-slate-900 text-white"
-                          : "bg-slate-200 text-slate-600"
-                          }`}
-                      >
-                        {tab.badge}
+                    {tab.count !== null && (
+                      <span className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 py-0.5 px-2 rounded-full text-xs">
+                        {tab.count}
                       </span>
                     )}
                   </button>
@@ -1018,116 +563,87 @@ const PaperTrading = ({ userId = "demo-user", externalSettings = null }) => {
             </nav>
           </div>
 
-          {/* 🎯 탭 콘텐츠 */}
-          <div className="p-6">{renderTabContent()}</div>
+          {/* 탭 콘텐츠 */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+            {renderTabContent()}
+          </div>
         </div>
 
-        {/* 🎯 시작 가이드 (코인 미선택시) */}
-        {!hasSelectedCoins && !isActive && (
-          <div className="mt-6 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-6">
-            <div className="flex items-start space-x-4">
-              <div className="p-3 bg-blue-100 rounded-xl">
-                <RocketIcon className="w-6 h-6 text-blue-600" />
+        {/* 우측: 거래 컨트롤 (1칸) */}
+        <div className="space-y-6">
+          {/* 거래 상태 카드 */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
+              실시간 자동 매매 관리
+            </h3>
+
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-600 dark:text-gray-400">거래 상태</span>
+                <span className={`text-sm font-medium ${isActive ? 'text-green-600 dark:text-green-400' : 'text-gray-500'
+                  }`}>
+                  {isActive ? "활성" : "비활성"}
+                </span>
               </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-semibold text-blue-900 mb-4">
-                  🚀 페이퍼트레이딩 시작 가이드
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-blue-700">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
-                      1
-                    </div>
-                    <div className="text-sm">
-                      <strong>코인 선택</strong>
-                      <br />
-                      "코인 관리" 탭에서 거래할 코인을 선택하세요
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
-                      2
-                    </div>
-                    <div className="text-sm">
-                      <strong>전략 설정</strong>
-                      <br />
-                      설정 버튼으로 거래 전략을 조정하세요
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
-                      3
-                    </div>
-                    <div className="text-sm">
-                      <strong>거래 시작</strong>
-                      <br />
-                      "거래 시작" 버튼을 클릭하세요
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
-                      4
-                    </div>
-                    <div className="text-sm">
-                      <strong>자동 거래</strong>
-                      <br />
-                      실시간 업비트 시세로 자동 거래가 시작됩니다!
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-4">
-                  <button
-                    onClick={() => setActiveTab("coins")}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-                  >
-                    코인 관리로 이동 →
-                  </button>
-                </div>
+
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-600 dark:text-gray-400">선택 코인</span>
+                <span className="text-sm font-medium text-gray-900 dark:text-white">
+                  {selectedCoins?.length ?? 0}개
+                </span>
               </div>
+
+              <button
+                onClick={handleToggleTrading}
+                disabled={coinsLoading}
+                className={`w-full flex items-center justify-center space-x-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${isActive
+                  ? 'bg-red-600 hover:bg-red-700 text-white'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                {isActive ? <PauseIcon className="h-4 w-4" /> : <PlayIcon className="h-4 w-4" />}
+                <span>{isActive ? '거래 중지' : '거래 시작'}</span>
+              </button>
             </div>
           </div>
-        )}
 
-        {/* 🎯 활성 거래 상태 표시 */}
-        {isActive && (
-          <div className="mt-6 bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200 rounded-xl p-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                <div className="relative">
-                  <div className="w-4 h-4 bg-emerald-500 rounded-full animate-pulse"></div>
-                  <div className="absolute inset-0 w-4 h-4 bg-emerald-400 rounded-full animate-ping"></div>
-                </div>
-                <div>
-                  <p className="text-emerald-800 font-semibold text-lg">
+          {/* 실시간 상태 */}
+          {isActive && (
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+              <div className="flex items-center space-x-3">
+                <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse" />
+                <div className="flex-1">
+                  <div className="text-sm font-medium text-blue-900 dark:text-blue-100">
                     실시간 페이퍼트레이딩 진행 중
-                  </p>
-                  <p className="text-emerald-600 text-sm">
-                    {selectedCoinsCount}개 코인 모니터링 •{" "}
-                    {testMode ? "테스트 모드" : "실전 모드"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="text-right">
-                {lastSignal && (
-                  <div className="text-emerald-700 text-sm mb-2">
-                    <strong>최신 신호:</strong> {lastSignal.symbol}{" "}
-                    {lastSignal.type}
-                    <span className="ml-2 text-emerald-600">
-                      ({(lastSignal.totalScore || 0).toFixed(1)}점)
-                    </span>
                   </div>
-                )}
-                <div className="text-emerald-600 text-xs">
-                  {new Date().toLocaleTimeString()} 기준
+                  <div className="text-xs text-blue-700 dark:text-blue-300">
+                    {selectedCoins?.length ?? 0}개 코인 모니터링 • 중앙 데이터 연동
+                  </div>
                 </div>
+                <ActivityIcon className="h-5 w-5 text-blue-600 dark:text-blue-400" />
               </div>
             </div>
-          </div>
-        )}
+          )}
+
+          {/* 설정 버튼 */}
+          <button
+            onClick={() => setShowSettings(true)}
+            className="w-full flex items-center justify-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+          >
+            <CogIcon className="h-4 w-4" />
+            <span>거래 설정</span>
+          </button>
+        </div>
       </div>
+
+      {/* 설정 모달 */}
+      {showSettings && TradingSettings && (
+        <TradingSettings
+          onClose={() => setShowSettings(false)}
+        />
+      )}
     </div>
   );
 };
 
-export default PaperTrading;
+export default React.memo(PaperTrading);

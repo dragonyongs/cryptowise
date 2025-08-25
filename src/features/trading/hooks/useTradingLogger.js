@@ -1,6 +1,7 @@
-// src/hooks/useTradingLogger.js - 로그 폭발 문제 완전 해결 버전
+// src/hooks/useTradingLogger.js - 전역 상태 관리 완전 버전
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { create } from "zustand";
 
 const LOG_LEVELS = {
   error: 0,
@@ -27,23 +28,45 @@ const THROTTLE_SETTINGS = {
   debug: 30000,
 };
 
-// 🎯 NEW: 동적 포지션 관리 관련 패턴 추가
+// 🎯 동적 포지션 관리 관련 패턴
 const SPECIAL_PATTERNS = {
   websocketData: /메시지 수신|데이터 처리|브로드캐스트/,
   priceUpdate: /가격 업데이트|₩.*원/,
   signalEvaluation: /신호 평가|조건 미달/,
   marketData: /마켓 데이터|시장 데이터/,
-  // 🎯 동적 포지션 관리 패턴 추가
   dynamicPosition: /동적|포지션 관리|최적화 계획|리밸런싱/,
   positionAdjustment: /추매|감매|포지션 추가|포지션 감소/,
   riskAssessment: /리스크|위험|손절|안전/,
   cashManagement: /현금 비중|현금 관리|유동성/,
 };
 
-export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
-  const [logs, setLogs] = useState([]);
+// 🔥 전역 로그 스토어 (Zustand)
+const useGlobalLogStore = create((set, get) => ({
+  logs: [],
 
-  // 🎯 동적 포지션 관리 통계 추가
+  addLogToStore: (logEntry) => {
+    console.log("🌍 전역 스토어에 로그 추가:", logEntry);
+    set((state) => ({
+      logs: [logEntry, ...state.logs.slice(0, 49)],
+    }));
+  },
+
+  clearAllLogs: () => {
+    console.log("🗑️ 전역 로그 모두 삭제");
+    set({ logs: [] });
+  },
+
+  setLogs: (logs) => {
+    console.log("📝 전역 로그 설정:", logs.length, "개");
+    set({ logs });
+  },
+}));
+
+export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
+  // 🔥 전역 스토어에서 로그 상태 가져오기
+  const { logs, addLogToStore, clearAllLogs } = useGlobalLogStore();
+
+  // 🎯 동적 포지션 관리 통계 (로컬 상태)
   const [monitoringStats, setMonitoringStats] = useState({
     dataReceived: 0,
     signalsGenerated: 0,
@@ -56,7 +79,7 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
     sessionStartTime: new Date(),
     logsBlocked: 0,
     logsThrottled: 0,
-    // 🎯 NEW: 동적 포지션 관리 통계
+    // 🎯 동적 포지션 관리 통계
     dynamicPositionEvents: 0,
     optimizationPlansGenerated: 0,
     positionAdjustments: 0,
@@ -70,7 +93,7 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
   const messageCountMap = useRef(new Map());
   const lastCleanup = useRef(Date.now());
 
-  // 🎯 NEW: 동적 포지션 관리 성능 추적
+  // 🎯 동적 포지션 관리 성능 추적
   const dynamicStatsRef = useRef({
     lastOptimization: null,
     optimizationFrequency: 0,
@@ -86,6 +109,107 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
     peakLogsPerSecond: 0,
   });
 
+  // 🔥 전역 로그 기반 logStats 계산
+  const logStats = useMemo(() => {
+    if (!Array.isArray(logs)) {
+      return {
+        total: 0,
+        errors: 0,
+        warnings: 0,
+        success: 0,
+        info: 0,
+        debug: 0,
+        recent: {
+          last10min: 0,
+          lastHour: 0,
+          today: 0,
+        },
+      };
+    }
+
+    const validLogs = logs.filter((log) => log && typeof log === "object");
+    const total = validLogs.length;
+
+    // 실제 level 기반으로 정확한 카운팅
+    const errors = validLogs.filter(
+      (log) => (log.level || "").toLowerCase() === "error"
+    ).length;
+    const warnings = validLogs.filter(
+      (log) => (log.level || "").toLowerCase() === "warning"
+    ).length;
+    const success = validLogs.filter(
+      (log) => (log.level || "").toLowerCase() === "success"
+    ).length;
+    const info = validLogs.filter(
+      (log) => (log.level || "").toLowerCase() === "info"
+    ).length;
+    const debug = validLogs.filter(
+      (log) => (log.level || "").toLowerCase() === "debug"
+    ).length;
+
+    // 최근 시간별 통계
+    const now = new Date();
+    const recent = {
+      last10min: validLogs.filter((log) => {
+        if (!log.timestamp) return false;
+        try {
+          return (
+            new Date(log.timestamp) > new Date(now.getTime() - 10 * 60 * 1000)
+          );
+        } catch {
+          return false;
+        }
+      }).length,
+      lastHour: validLogs.filter((log) => {
+        if (!log.timestamp) return false;
+        try {
+          return (
+            new Date(log.timestamp) > new Date(now.getTime() - 60 * 60 * 1000)
+          );
+        } catch {
+          return false;
+        }
+      }).length,
+      today: validLogs.filter((log) => {
+        if (!log.timestamp) return false;
+        try {
+          const today = new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate()
+          );
+          return new Date(log.timestamp) >= today;
+        } catch {
+          return false;
+        }
+      }).length,
+    };
+
+    return { total, errors, warnings, success, info, debug, recent };
+  }, [logs]);
+
+  // 🔥 초기화 시 테스트 로그 생성
+  useEffect(() => {
+    console.log("🚀 useTradingLogger 초기화됨");
+
+    // 초기화 시 기본 로그 추가
+    const initLog = {
+      id: `init_${Date.now()}`,
+      timestamp: new Date(),
+      message: "🚀 CryptoWise 트레이딩 시스템 시작됨",
+      level: "success",
+      type: "success",
+      color: LOG_COLORS.success,
+      metadata: {
+        sessionTime: 0,
+        specialPattern: undefined,
+        isDynamicEvent: false,
+      },
+    };
+
+    addLogToStore(initLog);
+  }, [addLogToStore]);
+
   // 기존 성능 카운터 업데이트 로직 유지
   useEffect(() => {
     const interval = setInterval(() => {
@@ -93,15 +217,14 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
       if (currentSecond !== performanceRef.current.lastSecond) {
         const logsThisSecond = performanceRef.current.currentSecondCount;
         performanceRef.current.logsPerSecond = logsThisSecond;
-
         if (logsThisSecond > performanceRef.current.peakLogsPerSecond) {
           performanceRef.current.peakLogsPerSecond = logsThisSecond;
         }
-
         performanceRef.current.currentSecondCount = 0;
         performanceRef.current.lastSecond = currentSecond;
       }
     }, 1000);
+
     return () => clearInterval(interval);
   }, []);
 
@@ -110,13 +233,12 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
     const cleanup = setInterval(() => {
       const now = Date.now();
 
-      setLogs((prev) => {
-        if (prev.length > 100) {
-          return prev.slice(0, 50);
-        }
-        return prev;
-      });
+      // 로그 개수 제한 (전역 스토어 사용)
+      if (logs.length > 100) {
+        useGlobalLogStore.getState().setLogs(logs.slice(0, 50));
+      }
 
+      // 캐시 정리
       for (const [key, timestamp] of throttleMap.current.entries()) {
         if (now - timestamp > 300000) {
           throttleMap.current.delete(key);
@@ -138,10 +260,11 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
         );
       }
     }, 300000);
-    return () => clearInterval(cleanup);
-  }, []);
 
-  // 🎯 개선된 메시지 패턴 체크 (동적 포지션 관리 패턴 포함)
+    return () => clearInterval(cleanup);
+  }, [logs.length]);
+
+  // 🎯 개선된 메시지 패턴 체크
   const checkSpecialPattern = useCallback((message) => {
     for (const [patternName, pattern] of Object.entries(SPECIAL_PATTERNS)) {
       if (pattern.test(message)) {
@@ -154,7 +277,6 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
   // 🎯 동적 포지션 관리 이벤트 추적
   const trackDynamicEvent = useCallback((eventType, metadata = {}) => {
     const now = Date.now();
-
     switch (eventType) {
       case "OPTIMIZATION_PLAN":
         setMonitoringStats((prev) => ({
@@ -164,21 +286,18 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
         }));
         dynamicStatsRef.current.lastOptimization = now;
         break;
-
       case "POSITION_ADJUSTMENT":
         setMonitoringStats((prev) => ({
           ...prev,
           positionAdjustments: prev.positionAdjustments + 1,
           dynamicPositionEvents: prev.dynamicPositionEvents + 1,
         }));
-
         if (metadata.success) {
           dynamicStatsRef.current.successfulAdjustments++;
         } else {
           dynamicStatsRef.current.failedAdjustments++;
         }
         break;
-
       case "RISK_ASSESSMENT":
         setMonitoringStats((prev) => ({
           ...prev,
@@ -186,7 +305,6 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
           dynamicPositionEvents: prev.dynamicPositionEvents + 1,
         }));
         break;
-
       case "CASH_OPTIMIZATION":
         setMonitoringStats((prev) => ({
           ...prev,
@@ -197,16 +315,29 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
     }
   }, []);
 
-  // ✅ 기존 강화된 로그 추가 함수 유지하면서 동적 이벤트 추적 추가
+  // 🔥 완전히 개선된 addLog 함수 (전역 스토어 사용)
   const addLog = useCallback(
     (message, level = "info", throttleKey = null, metadata = {}) => {
-      if (!message) return;
+      console.log("🔥 addLog 호출됨:", {
+        message,
+        level,
+        throttleKey,
+        metadata,
+      });
+
+      if (!message) {
+        console.log("❌ 메시지가 비어있어서 리턴");
+        return;
+      }
 
       const numericLevel = LOG_LEVELS[level] ?? LOG_LEVELS.info;
       const now = Date.now();
 
-      // 기존 검증 로직들 모두 유지...
+      console.log("🔥 로그 레벨 체크:", { numericLevel, currentLogLevel });
+
+      // 기존 검증 로직들 모두 유지
       if (numericLevel > currentLogLevel) {
+        console.log("❌ 로그 레벨이 높아서 차단됨");
         setMonitoringStats((prev) => ({
           ...prev,
           logsBlocked: prev.logsBlocked + 1,
@@ -215,6 +346,7 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
       }
 
       if (level === "debug" && process.env.NODE_ENV !== "development") {
+        console.log("❌ 프로덕션에서 디버그 로그 차단됨");
         setMonitoringStats((prev) => ({
           ...prev,
           logsBlocked: prev.logsBlocked + 1,
@@ -237,8 +369,8 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
         trackDynamicEvent("CASH_OPTIMIZATION", metadata);
       }
 
+      // 스로틀링 체크
       if (specialPattern) {
-        // 동적 포지션 관리 패턴은 덜 강하게 스로틀링 (30초)
         const throttleTime =
           specialPattern.includes("dynamic") ||
           specialPattern.includes("position") ||
@@ -249,30 +381,37 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
 
         const patternKey = `pattern_${specialPattern}`;
         const lastPatternTime = throttleMap.current.get(patternKey);
+
         if (lastPatternTime && now - lastPatternTime < throttleTime) {
+          console.log("🔄 패턴 스로틀링으로 차단됨:", specialPattern);
           setMonitoringStats((prev) => ({
             ...prev,
             logsThrottled: prev.logsThrottled + 1,
           }));
           return;
         }
+
         throttleMap.current.set(patternKey, now);
       }
 
-      // 기존 스로틀링 및 중복 체크 로직 모두 유지...
+      // 기본 스로틀링 체크
       if (throttleKey) {
         const lastThrottleTime = throttleMap.current.get(throttleKey);
         const throttleDelay = THROTTLE_SETTINGS[level] || 5000;
+
         if (lastThrottleTime && now - lastThrottleTime < throttleDelay) {
+          console.log("🔄 기본 스로틀링으로 차단됨:", throttleKey);
           setMonitoringStats((prev) => ({
             ...prev,
             logsThrottled: prev.logsThrottled + 1,
           }));
           return;
         }
+
         throttleMap.current.set(throttleKey, now);
       }
 
+      // 중복 메시지 체크
       const messageHash = message.substring(0, 100);
       const duplicateKey = `${level}_${messageHash}`;
       const duplicateData = duplicateMap.current.get(duplicateKey);
@@ -280,9 +419,11 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
       if (duplicateData) {
         const timeSinceLastDuplicate = now - duplicateData.lastTime;
         const minInterval = level === "error" ? 10000 : 30000;
+
         if (timeSinceLastDuplicate < minInterval) {
           duplicateData.count++;
           duplicateData.lastTime = now;
+          console.log("🔄 중복 메시지로 차단됨");
           setMonitoringStats((prev) => ({
             ...prev,
             logsThrottled: prev.logsThrottled + 1,
@@ -299,8 +440,10 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
         duplicateMap.current.set(duplicateKey, { count: 1, lastTime: now });
       }
 
+      // 성능 제한 체크
       performanceRef.current.currentSecondCount++;
       if (performanceRef.current.currentSecondCount > 10) {
+        console.log("⚡ 성능 제한으로 차단됨");
         setMonitoringStats((prev) => ({
           ...prev,
           logsBlocked: prev.logsBlocked + 1,
@@ -308,7 +451,7 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
         return;
       }
 
-      // 로그 생성
+      // 🔥 로그 생성 및 전역 스토어에 저장
       logIdCounter.current += 1;
       const timestamp = Date.now();
       const uniqueId = `${timestamp}_${logIdCounter.current}`;
@@ -318,12 +461,12 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
         timestamp: new Date(),
         message: String(message).substring(0, 500),
         level,
+        type: level,
         color: LOG_COLORS[level] || LOG_COLORS.info,
         metadata: {
           ...metadata,
           sessionTime: timestamp - monitoringStats.sessionStartTime?.getTime(),
           specialPattern: specialPattern || undefined,
-          // 🎯 NEW: 동적 포지션 관리 관련 메타데이터
           isDynamicEvent:
             specialPattern &&
             (specialPattern.includes("dynamic") ||
@@ -333,8 +476,12 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
         },
       };
 
-      setLogs((prev) => [logEntry, ...prev.slice(0, 49)]);
+      console.log("✅ 로그 생성 완료:", logEntry);
 
+      // 🌍 전역 스토어에 저장
+      addLogToStore(logEntry);
+
+      // 콘솔 출력
       const shouldConsoleLog =
         process.env.NODE_ENV === "development" ||
         level === "error" ||
@@ -349,9 +496,11 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
             info: "ℹ️",
             debug: "🐛",
           }[level] || "ℹ️";
+
         console.log(`${emoji} [${level.toUpperCase()}] ${message}`, metadata);
       }
 
+      // 통계 업데이트
       setMonitoringStats((prev) => ({
         ...prev,
         lastActivity: new Date().toLocaleTimeString(),
@@ -362,10 +511,11 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
       checkSpecialPattern,
       monitoringStats.sessionStartTime,
       trackDynamicEvent,
+      addLogToStore,
     ]
   );
 
-  // 기존 updateStats, resetStats 함수들 유지하되 동적 관리 통계 추가
+  // updateStats 함수
   const updateStats = useCallback((updateFunction) => {
     setMonitoringStats((prev) => {
       if (typeof updateFunction === "function") {
@@ -384,12 +534,21 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
     });
   }, []);
 
+  // 🔥 개선된 resetStats 함수 (전역 로그 포함)
   const resetStats = useCallback(() => {
+    console.log("🔄 전체 통계 및 로그 리셋 시작");
+
     const now = new Date();
+
+    // 전역 로그 초기화
+    clearAllLogs();
+
+    // 로컬 캐시 초기화
     throttleMap.current.clear();
     duplicateMap.current.clear();
     messageCountMap.current.clear();
 
+    // 통계 초기화
     setMonitoringStats({
       dataReceived: 0,
       signalsGenerated: 0,
@@ -402,7 +561,6 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
       sessionStartTime: now,
       logsBlocked: 0,
       logsThrottled: 0,
-      // 🎯 동적 포지션 관리 통계 리셋
       dynamicPositionEvents: 0,
       optimizationPlansGenerated: 0,
       positionAdjustments: 0,
@@ -410,7 +568,7 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
       cashOptimizations: 0,
     });
 
-    // 🎯 동적 관리 성능 통계 리셋
+    // 동적 관리 성능 통계 리셋
     dynamicStatsRef.current = {
       lastOptimization: null,
       optimizationFrequency: 0,
@@ -426,19 +584,29 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
       peakLogsPerSecond: 0,
     };
 
-    addLog(
-      "📊 통계 및 로그 캐시 완전 초기화 (동적 포지션 관리 포함)",
-      "success"
-    );
-  }, [addLog]);
+    // 리셋 완료 로그 추가
+    setTimeout(() => {
+      addLog(
+        "📊 통계 및 로그 캐시 완전 초기화 (동적 포지션 관리 포함)",
+        "success"
+      );
+    }, 100);
+  }, [addLog, clearAllLogs]);
 
-  // 기존 함수들 유지 (exportLogs, getFilteredLogs, getLogSystemStatus)...
+  // 🔥 exportLogs 함수 (전역 로그 사용)
   const exportLogs = useCallback(
     (format = "json") => {
       const exportData = {
         exportTime: new Date().toISOString(),
-        stats: monitoringStats,
-        logs: logs.slice(0, 200),
+        stats: logStats,
+        logs: logs.slice(0, 200).map((log) => ({
+          id: log.id,
+          timestamp: log.timestamp,
+          type: log.level,
+          level: log.level,
+          message: log.message,
+          details: log.metadata,
+        })),
         performance: {
           logsPerSecond: performanceRef.current.logsPerSecond,
           peakLogsPerSecond: performanceRef.current.peakLogsPerSecond,
@@ -446,7 +614,6 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
           throttleMapSize: throttleMap.current.size,
           duplicateMapSize: duplicateMap.current.size,
         },
-        // 🎯 동적 포지션 관리 성능 데이터 추가
         dynamicPositionPerformance: {
           ...dynamicStatsRef.current,
           adjustmentSuccessRate:
@@ -469,21 +636,44 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
       };
 
       if (format === "json") {
-        return JSON.stringify(exportData, null, 2);
+        const dataStr = JSON.stringify(exportData, null, 2);
+        const dataBlob = new Blob([dataStr], { type: "application/json" });
+        const url = URL.createObjectURL(dataBlob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `crypto-wise-logs-${new Date().toISOString().split("T")[0]}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        return exportData;
       } else if (format === "csv") {
-        const csvHeaders =
-          "timestamp,level,message,blocked,throttled,isDynamic";
+        const csvHeaders = "timestamp,level,type,message,isDynamic";
         const csvRows = logs.map(
           (log) =>
-            `"${log.timestamp.toISOString()}","${log.level}","${log.message.replace(/"/g, '""')}","${log.metadata?.isDynamicEvent || false}"`
+            `"${log.timestamp.toISOString()}","${log.level}","${log.level}","${log.message.replace(/"/g, '""')}","${log.metadata?.isDynamicEvent || false}"`
         );
-        return [csvHeaders, ...csvRows].join("\n");
+        const csvContent = [csvHeaders, ...csvRows].join("\n");
+
+        const csvBlob = new Blob([csvContent], { type: "text/csv" });
+        const csvUrl = URL.createObjectURL(csvBlob);
+        const csvLink = document.createElement("a");
+        csvLink.href = csvUrl;
+        csvLink.download = `crypto-wise-logs-${new Date().toISOString().split("T")[0]}.csv`;
+        document.body.appendChild(csvLink);
+        csvLink.click();
+        document.body.removeChild(csvLink);
+        URL.revokeObjectURL(csvUrl);
+
+        return csvContent;
       }
+
       return exportData;
     },
-    [logs, monitoringStats]
+    [logs, logStats, monitoringStats]
   );
 
+  // getFilteredLogs 함수
   const getFilteredLogs = useCallback(
     (filterLevel = null, searchTerm = null, filterDynamic = null) => {
       let filtered = logs;
@@ -501,7 +691,6 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
         );
       }
 
-      // 🎯 NEW: 동적 포지션 관리 필터 추가
       if (filterDynamic === true) {
         filtered = filtered.filter(
           (log) => log.metadata?.isDynamicEvent === true
@@ -515,7 +704,7 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
     [logs]
   );
 
-  // 🎯 개선된 시스템 상태 정보 (동적 관리 통계 포함)
+  // getLogSystemStatus 함수
   const getLogSystemStatus = useCallback(() => {
     const totalAdjustments =
       dynamicStatsRef.current.successfulAdjustments +
@@ -533,7 +722,6 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
       throttledPercentage:
         (monitoringStats.logsThrottled / (logIdCounter.current || 1)) * 100,
       memoryUsage: `${Math.round(((throttleMap.current.size + duplicateMap.current.size) * 50) / 1024)} KB`,
-      // 🎯 NEW: 동적 포지션 관리 상태
       dynamicPositionHealth: {
         totalEvents: monitoringStats.dynamicPositionEvents,
         optimizationPlans: monitoringStats.optimizationPlansGenerated,
@@ -552,16 +740,16 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
   }, [monitoringStats]);
 
   return {
-    // 기존 반환값 모두 유지
+    // 🔥 전역 상태에서 가져온 logs
     logs,
+    logStats,
     monitoringStats,
     addLog,
     updateStats,
     resetStats,
     exportLogs,
-    getFilteredLogs, // 🎯 동적 필터 기능 추가됨
-    getLogSystemStatus, // 🎯 동적 관리 상태 정보 추가됨
-
+    getFilteredLogs,
+    getLogSystemStatus,
     performance: {
       logsPerSecond: performanceRef.current.logsPerSecond,
       peakLogsPerSecond: performanceRef.current.peakLogsPerSecond,
@@ -569,24 +757,42 @@ export const useTradingLogger = (currentLogLevel = LOG_LEVELS.info) => {
       throttleMapSize: throttleMap.current.size,
       duplicateMapSize: duplicateMap.current.size,
     },
-
-    // 🎯 NEW: 동적 포지션 관리 전용 기능들
+    // 🎯 동적 포지션 관리 전용 기능들
     trackDynamicEvent,
     dynamicStats: dynamicStatsRef.current,
-
     logLevels: LOG_LEVELS,
     logColors: LOG_COLORS,
     throttleSettings: THROTTLE_SETTINGS,
-
     ...(process.env.NODE_ENV === "development" && {
       debug: {
         throttleMap: throttleMap.current,
         duplicateMap: duplicateMap.current,
-        specialPatterns: SPECIAL_PATTERNS, // 🎯 동적 패턴 포함
+        specialPatterns: SPECIAL_PATTERNS,
         dynamicStats: dynamicStatsRef.current,
       },
     }),
   };
+};
+
+// 🌍 전역에서 사용할 수 있는 addLog 함수 내보내기
+export const addGlobalLog = (message, level = "info", metadata = {}) => {
+  const logEntry = {
+    id: `global_${Date.now()}_${Math.random()}`,
+    timestamp: new Date(),
+    message: String(message).substring(0, 500),
+    level,
+    type: level,
+    color: LOG_COLORS[level] || LOG_COLORS.info,
+    metadata: {
+      ...metadata,
+      sessionTime: 0,
+      specialPattern: undefined,
+      isDynamicEvent: false,
+    },
+  };
+
+  useGlobalLogStore.getState().addLogToStore(logEntry);
+  console.log("🌍 전역 로그 추가됨:", logEntry);
 };
 
 export default useTradingLogger;

@@ -187,7 +187,7 @@ const TechnicalIndicators = React.memo(
 
     return (
       <div className={`space-y-6 ${className}`}>
-        <div className="text-sm text-gray-600 mb-4">
+        <div className="text-sm text-gray-600 dark:text-gray-100 mb-4">
           활성화된 지표들의 신호가 일치할 때만 매매를 실행합니다.
         </div>
 
@@ -201,12 +201,12 @@ const TechnicalIndicators = React.memo(
           }
 
           return (
-            <div key={indicatorKey} className="border border-gray-200 rounded-lg p-4">
+            <div key={indicatorKey} className="border border-gray-200 dark:border-gray-600 rounded-lg p-4">
               {/* 지표 헤더 */}
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center space-x-3">
                   <BarChart3Icon className="w-5 h-5 text-gray-500" />
-                  <h3 className="font-medium text-gray-900">
+                  <h3 className="font-medium text-gray-900 dark:text-gray-200">
                     {INDICATOR_NAMES[indicatorKey] || indicatorKey}
                   </h3>
                 </div>
@@ -215,8 +215,8 @@ const TechnicalIndicators = React.memo(
                 <button
                   onClick={() => onToggleIndicator(indicatorKey)}
                   className={`p-2 rounded-lg transition-all ${config.enabled
-                      ? "text-blue-600 bg-blue-100"
-                      : "text-gray-400 bg-gray-100"
+                    ? "text-blue-600 bg-blue-100"
+                    : "text-gray-400 bg-gray-100"
                     }`}
                 >
                   {config.enabled ? (

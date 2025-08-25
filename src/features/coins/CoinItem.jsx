@@ -240,7 +240,7 @@ const CoinItem = memo(({
                 <div className="grid grid-cols-2 gap-4 mb-3">
                     <div>
                         <p className="text-sm text-gray-600 mb-1">거래대금(24H)</p>
-                        <p className="text-sm font-medium text-gray-900">
+                        <p className="text-sm font-medium text-gray-900 dark:text-white">
                             ₩{formatVolume(coin.volume_24h)}
                         </p>
                     </div>
@@ -250,7 +250,7 @@ const CoinItem = memo(({
                             <span className={`font-bold text-lg ${scoreStyle.color}`}>
                                 {investmentScore > 0 ? investmentScore : '--'}
                             </span>
-                            <span className="text-xs text-gray-500">/100</span>
+                            <span className="text-xs text-gray-500 dark:text-gray-300">/100</span>
                         </div>
                         <div className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${scoreStyle.bg} ${scoreStyle.color} ${scoreStyle.borderColor} border`}>
                             {scoreStyle.grade}
