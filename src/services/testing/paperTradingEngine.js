@@ -1223,6 +1223,8 @@ class PaperTradingEngine {
         `positions ${summary.positions.length}개 (동적: ${dynamicPositions.length}개), ` +
         `trades ${summary.trades.length}개`
     );
+
+    this.log("요약 전체: ", summary);
     return summary;
   }
 

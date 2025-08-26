@@ -98,6 +98,7 @@ class SignalGenerator {
   }
 
   // 🎯 NEW: 중앙 데이터 매니저 초기화 및 구독
+  // ✅ initialize 메서드 수정
   async initialize(centralDataManager) {
     if (this.dataSubscription) {
       console.log("🔄 SignalGenerator 이미 초기화됨");
@@ -118,10 +119,20 @@ class SignalGenerator {
 
       this.isDataReady = true;
       this.log("✅ 중앙 데이터 매니저 구독 완료", "success");
+
+      return true;
     } catch (error) {
       this.log(`❌ 중앙 데이터 매니저 연동 실패: ${error.message}`, "error");
       throw error;
     }
+  }
+
+  getTradingSettings() {
+    // usePaperTrading store 참조 (의존성 주입 방식으로 개선)
+    if (typeof window !== "undefined" && window.tradingStore) {
+      return window.tradingStore.getState().tradingSettings;
+    }
+    return null;
   }
 
   getEffectiveSettings() {

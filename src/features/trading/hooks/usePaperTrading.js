@@ -1,5 +1,6 @@
-// src/features/trading/hooks/usePaperTrading.js - 전문가 수준 완전 리팩토링 버전
-import { useState, useEffect, useCallback, useRef } from "react";
+// src/features/trading/hooks/usePaperTrading.js - 함수 순서 수정 버전
+
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 
 // ✅ Store 연결
 import { usePortfolioStore } from "../../../stores/portfolioStore.js";
@@ -11,18 +12,15 @@ import { useSignalManagement } from "./useSignalManagement.js";
 import { useConnectionManager } from "./useConnectionManager.js";
 import { usePortfolioSync } from "./usePortfolioSync.js";
 
-// 기존 서비스들 - 모두 실제 사용됨
+// 기존 서비스들
 import { paperTradingEngine } from "../../../services/testing/paperTradingEngine.js";
 import { upbitMarketService } from "../../../services/upbit/upbitMarketService.js";
 import { upbitWebSocketService } from "../../../services/upbit/upbitWebSocket.js";
 import { marketAnalysisService } from "../../../services/analysis/marketAnalysis.js";
 import { centralDataManager } from "../../../services/data/centralDataManager.js";
-import {
-  signalGenerator,
-  initializeSignalGenerator,
-} from "../../../services/analysis/signalGenerator.js";
+import { signalGenerator } from "../../../services/analysis/signalGenerator.js";
 
-// 동적 포지션 관리 서비스들 - 모두 실제 사용됨
+// 동적 포지션 관리 서비스들
 import { dynamicPositionManager } from "../../../services/portfolio/dynamicPositionManager.js";
 import { positionSizing } from "../../../services/portfolio/positionSizing.js";
 import { cashManagement } from "../../../services/portfolio/cashManagement.js";
@@ -38,22 +36,29 @@ export const usePaperTrading = (
   userId = "demo-user",
   externalSettings = null
 ) => {
+  // 🔥 마운트 상태 추적
+  const mountedRef = useRef(true);
+  const initializationRef = useRef(false);
+  const cleanupRef = useRef(false);
+  const systemInitializedRef = useRef(false);
+
   // ✅ Store 연결
   const { updatePortfolio: updatePortfolioStore } = usePortfolioStore();
   const { updateTradingSettings: updateGlobalTradingSettings } =
     useTradingStore();
 
-  // 🎯 초기 자본 관리
+  // ✅ 초기 자본 관리
   const [customCapital, setCustomCapital] = useState(
     externalSettings?.initialCapital || null
   );
   const { initialCapital } = usePortfolioConfig(customCapital);
 
-  // ✅ 기존 상태들 모두 유지
+  // ✅ 초기화 상태
   const [isStoreInitialized, setIsStoreInitialized] = useState(false);
   const [centralDataReady, setCentralDataReady] = useState(false);
   const [signalGeneratorReady, setSignalGeneratorReady] = useState(false);
 
+  // ✅ coinStore 연결
   const {
     selectedCoins: storeSelectedCoins,
     isInitialized,
@@ -63,12 +68,15 @@ export const usePaperTrading = (
     removeCoin: removeCoinFromStore,
   } = useCoinStore();
 
+  // ✅ 핵심 상태들
+  const [isActive, setIsActive] = useState(false);
   const [favoriteCoins, setFavoriteCoins] = useState([]);
   const [topCoins, setTopCoins] = useState([]);
   const [currentSelectedCoins, setCurrentSelectedCoins] = useState([]);
-  const [isActive, setIsActive] = useState(false);
   const [marketData, setMarketData] = useState(new Map());
   const [marketCondition, setMarketCondition] = useState(null);
+
+  // ✅ 트레이딩 설정
   const [tradingMode, setTradingMode] = useState("favorites");
   const [topCoinsLimit, setTopCoinsLimit] = useState(10);
   const [testMode, setTestMode] = useState(true);
@@ -76,33 +84,67 @@ export const usePaperTrading = (
   const [selectedMarket, setSelectedMarket] = useState("KRW");
   const [availableMarkets] = useState(["KRW", "BTC", "USDT"]);
 
-  // 🎯 동적 포지션 관리 관련 상태
+  // ✅ 동적 포지션 관리 상태
   const [dynamicPositionEnabled, setDynamicPositionEnabled] = useState(true);
   const [optimizationPlan, setOptimizationPlan] = useState(null);
   const [positionAnalysis, setPositionAnalysis] = useState(null);
   const [riskAssessment, setRiskAssessment] = useState(null);
   const [cashOptimization, setCashOptimization] = useState(null);
 
-  // 기존 Refs 모두 유지
+  // 🔥 여기에 추가
+  const [autoStopDisabled, setAutoStopDisabled] = useState(true); // 테스트 모드에서는 기본 true
+
+  // ✅ Refs
   const isActiveRef = useRef(isActive);
   const currentSelectedCoinsRef = useRef(currentSelectedCoins);
   const tradingSettingsRef = useRef();
   const testModeRef = useRef(testMode);
   const tradingModeRef = useRef(tradingMode);
-  const isSystemInitialized = useRef(false);
+
+  // 인터벌 Refs
   const portfolioIntervalRef = useRef(null);
   const marketAnalysisIntervalRef = useRef(null);
   const topCoinsUpdateIntervalRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
   const optimizationIntervalRef = useRef(null);
-  const riskCheckIntervalRef = useRef(null);
 
-  // 🎯 페이퍼 트레이딩 엔진 초기화
+  // 🔥 시스템 준비 상태
+  const systemReady = useMemo(() => {
+    return (
+      isStoreInitialized &&
+      centralDataReady &&
+      signalGeneratorReady &&
+      favoriteCoins.length > 0 &&
+      !cleanupRef.current
+    );
+  }, [
+    isStoreInitialized,
+    centralDataReady,
+    signalGeneratorReady,
+    favoriteCoins.length,
+  ]);
+
+  // ✅ Refs 동기화
   useEffect(() => {
-    paperTradingEngine.resetPortfolio(initialCapital);
+    isActiveRef.current = isActive;
+  }, [isActive]);
+  useEffect(() => {
+    currentSelectedCoinsRef.current = currentSelectedCoins;
+  }, [currentSelectedCoins]);
+  useEffect(() => {
+    testModeRef.current = testMode;
+  }, [testMode]);
+  useEffect(() => {
+    tradingModeRef.current = tradingMode;
+  }, [tradingMode]);
+
+  // 🎯 페이퍼 트레이딩 엔진 초기 설정
+  useEffect(() => {
+    if (mountedRef.current && initialCapital) {
+      paperTradingEngine.resetPortfolio(initialCapital);
+    }
   }, [initialCapital]);
 
-  // 기존 로거 및 관련 훅들
+  // ✅ 로거 및 관련 훅들
   const {
     logs,
     monitoringStats,
@@ -124,39 +166,10 @@ export const usePaperTrading = (
   const { marketSentiment, sentimentLoading, fetchMarketSentiment } =
     useMarketSentiment(addLog, isActive);
 
-  // ✅ 분리된 훅들 사용
-  const getTradingSettings = useCallback(() => tradingSettingsRef.current, []);
-
-  const {
-    signals,
-    lastSignal,
-    generateSignalsFromCachedData,
-    clearSignals,
-    updateSignalStatus,
-  } = useSignalManagement(signalGeneratorReady, addLog, getTradingSettings);
-
-  const {
-    connectionStatus,
-    handleCentralDataUpdate,
-    cleanup: cleanupConnection,
-    initializeConnection,
-  } = useConnectionManager(addLog, updateStats);
-
-  const { updatePortfolio } = usePortfolioSync(
-    syncPortfolio,
-    addLog,
-    updatePortfolioStore
-  );
-
-  // ✅ 설정 관리 (완전 구현)
+  // ✅ 설정 관리
   const getInitialSettings = useCallback(() => {
-    const baseSettings = {
-      portfolioAllocation: {
-        cash: 0.4,
-        t1: 0.42,
-        t2: 0.15,
-        t3: 0.03,
-      },
+    return {
+      portfolioAllocation: { cash: 0.4, t1: 0.42, t2: 0.15, t3: 0.03 },
       tradingConditions: {
         buyConditions: {
           minBuyScore: testMode ? 5.5 : 7.0,
@@ -192,288 +205,209 @@ export const usePaperTrading = (
         riskBasedAdjustment: true,
       },
     };
-
-    if (externalSettings) {
-      const merged = {
-        ...baseSettings,
-        ...externalSettings,
-        tradingConditions: {
-          ...baseSettings.tradingConditions,
-          buyConditions: {
-            ...baseSettings.tradingConditions.buyConditions,
-            ...(externalSettings.tradingConditions?.buyConditions || {}),
-          },
-          sellConditions: {
-            ...baseSettings.tradingConditions.sellConditions,
-            ...(externalSettings.tradingConditions?.sellConditions || {}),
-          },
-          riskManagement: {
-            ...baseSettings.tradingConditions.riskManagement,
-            ...(externalSettings.tradingConditions?.riskManagement || {}),
-          },
-        },
-        dynamicPosition: {
-          ...baseSettings.dynamicPosition,
-          ...(externalSettings.dynamicPosition || {}),
-        },
-      };
-      return merged;
-    }
-
-    return baseSettings;
-  }, [testMode, externalSettings, dynamicPositionEnabled]);
+  }, [testMode, dynamicPositionEnabled]);
 
   const [tradingSettings, setTradingSettings] = useState(() =>
     getInitialSettings()
   );
 
-  // Refs 동기화
-  useEffect(() => {
-    tradingModeRef.current = tradingMode;
-  }, [tradingMode]);
-  useEffect(() => {
-    isActiveRef.current = isActive;
-  }, [isActive]);
-  useEffect(() => {
-    currentSelectedCoinsRef.current = currentSelectedCoins;
-  }, [currentSelectedCoins]);
   useEffect(() => {
     tradingSettingsRef.current = tradingSettings;
   }, [tradingSettings]);
-  useEffect(() => {
-    testModeRef.current = testMode;
-  }, [testMode]);
 
-  // 🎯 동적 포지션 관리 초기화 (실제 사용됨)
-  const initializeDynamicPositionManagement = useCallback(async () => {
-    if (!dynamicPositionEnabled) {
-      addLog("동적 포지션 관리가 비활성화됨", "info");
-      return true;
+  // ✅ 분리된 훅들 사용
+  const getTradingSettingsCallback = useCallback(
+    () => tradingSettingsRef.current,
+    []
+  );
+
+  const {
+    signals,
+    lastSignal,
+    generateSignalsFromCachedData,
+    clearSignals,
+    updateSignalStatus,
+  } = useSignalManagement(
+    signalGeneratorReady,
+    addLog,
+    getTradingSettingsCallback
+  );
+
+  const {
+    connectionStatus,
+    handleCentralDataUpdate,
+    cleanup: cleanupConnection,
+    initializeConnection,
+  } = useConnectionManager(addLog, updateStats);
+
+  const { updatePortfolio } = usePortfolioSync(
+    syncPortfolio,
+    addLog,
+    updatePortfolioStore
+  );
+
+  // 🔥 리소스 정리
+  const cleanupAllResources = useCallback(() => {
+    if (cleanupRef.current || !mountedRef.current) return;
+
+    cleanupRef.current = true;
+    console.log("🧹 리소스 정리 시작");
+
+    setIsActive(false);
+    isActiveRef.current = false;
+
+    // 모든 인터벌 정리
+    [
+      portfolioIntervalRef,
+      marketAnalysisIntervalRef,
+      topCoinsUpdateIntervalRef,
+      optimizationIntervalRef,
+    ].forEach((ref) => {
+      if (ref.current) {
+        clearInterval(ref.current);
+        clearTimeout(ref.current);
+        ref.current = null;
+      }
+    });
+
+    // 분리된 훅들의 cleanup 호출
+    try {
+      cleanupConnection();
+      clearSignals();
+    } catch (error) {
+      console.warn("훅 정리 중 오류:", error);
     }
+
+    // 웹소켓 해제
+    try {
+      upbitWebSocketService.disconnect();
+    } catch (error) {
+      console.warn("웹소켓 해제 중 오류:", error);
+    }
+
+    // 신호 생성기 정리
+    if (signalGeneratorReady) {
+      try {
+        signalGenerator.cleanup?.();
+        setSignalGeneratorReady(false);
+      } catch (error) {
+        console.warn("SignalGenerator 정리 중 오류:", error);
+      }
+    }
+
+    // 상태 초기화
+    systemInitializedRef.current = false;
+    setCentralDataReady(false);
+    setOptimizationPlan(null);
+    setPositionAnalysis(null);
+    setRiskAssessment(null);
+    setCashOptimization(null);
+
+    addLog("🔌 연결 매니저 정리 완료", "info");
+    console.log("✅ 리소스 정리 완료");
+  }, [cleanupConnection, clearSignals, signalGeneratorReady, addLog]);
+
+  // 🔥 시장 조건 업데이트 (수정 버전)
+  const updateMarketCondition = useCallback(async () => {
+    if (!isActiveRef.current || !mountedRef.current) return null;
 
     try {
-      addLog("🎯 동적 포지션 관리 시스템 초기화", "info");
-      paperTradingEngine.setDynamicPositionEnabled(true);
+      addLog("시장 조건 분석 중", "info");
+      const condition = await marketAnalysisService.analyzeMarketCondition();
 
-      if (marketCondition) {
-        paperTradingEngine.updateMarketCondition(marketCondition);
+      if (isActiveRef.current && mountedRef.current) {
+        setMarketCondition(condition);
+
+        if (dynamicPositionEnabled) {
+          paperTradingEngine.updateMarketCondition(condition);
+        }
+
+        updateStats((prev) => ({
+          ...prev,
+          marketConditionsChecked: (prev.marketConditionsChecked || 0) + 1,
+        }));
+
+        // 🔥 자동 중지 방지 로직 추가
+        if (condition.overallBuyScore < 50) {
+          if (autoStopDisabled || testModeRef.current) {
+            addLog(
+              `⚠️ 시장 조건이 좋지 않지만 ${testModeRef.current ? "테스트 모드" : "자동 중지 비활성화"}에서는 계속 진행 (${condition.overallBuyScore?.toFixed(1)}점)`,
+              "warning"
+            );
+            // 자동 중지하지 않고 계속 진행
+          } else {
+            addLog("🛑 시장 조건 부적절로 인한 자동 중지", "error");
+            // 자동 중지 로직 (필요시)
+            if (isActiveRef.current) {
+              setTimeout(() => {
+                setIsActive(false);
+                isActiveRef.current = false;
+                cleanupAllResources();
+              }, 1000);
+            }
+            return condition;
+          }
+        }
+
+        const message = condition.isBuyableMarket
+          ? `시장 분석 완료: ${condition.buyability?.level} (${condition.overallBuyScore?.toFixed(1)}점)`
+          : `시장 조건 주의: ${condition.buyability?.level} (${condition.overallBuyScore?.toFixed(1)}점) - 거래 계속 진행`;
+
+        addLog(message, condition.isBuyableMarket ? "info" : "warning");
       }
 
-      addLog("✅ 동적 포지션 관리 시스템 초기화 완료", "success");
-      return true;
+      return condition;
     } catch (error) {
-      addLog(`❌ 동적 포지션 관리 초기화 실패: ${error.message}`, "error");
-      return false;
-    }
-  }, [dynamicPositionEnabled, marketCondition, addLog]);
-
-  // ✅ 중앙 시스템 초기화 (실제 사용됨)
-  const initializeCentralSystem = useCallback(async () => {
-    if (isSystemInitialized.current) {
-      addLog("🔄 중앙 시스템 이미 초기화됨", "info");
-      return true;
-    }
-
-    try {
-      addLog("🚀 중앙 데이터 매니저 초기화 시작", "info");
-      const initialCoins =
-        currentSelectedCoins.length > 0
-          ? currentSelectedCoins.map((c) => c.symbol)
-          : ["BTC", "ETH"];
-
-      const connectionReady = await initializeConnection(initialCoins);
-      if (!connectionReady) {
-        throw new Error("연결 초기화 실패");
+      if (isActiveRef.current && mountedRef.current) {
+        addLog(`시장 분석 실패: ${error.message}`, "error");
       }
-
-      setCentralDataReady(true);
-
-      await initializeSignalGenerator(centralDataManager);
-      signalGenerator.setTestMode(testModeRef.current);
-      setSignalGeneratorReady(true);
-
-      await initializeDynamicPositionManagement();
-
-      isSystemInitialized.current = true;
-      addLog("✅ 중앙 시스템 초기화 완료", "success");
-      return true;
-    } catch (error) {
-      addLog(`❌ 중앙 시스템 초기화 실패: ${error.message}`, "error");
-      return false;
+      return null;
     }
   }, [
-    currentSelectedCoins,
     addLog,
-    initializeDynamicPositionManagement,
-    initializeConnection,
+    updateStats,
+    dynamicPositionEnabled,
+    autoStopDisabled,
+    cleanupAllResources,
   ]);
 
-  // 🎯 실시간 데이터 처리
-  const processMarketDataUpdate = useCallback(
-    async (dataMap) => {
-      if (!dataMap || dataMap.size === 0) return;
-
-      setMarketData(dataMap);
-
-      if (isActiveRef.current && dataMap.size > 0) {
-        const newSignals = await generateSignalsFromCachedData(
-          Array.from(dataMap.keys())
-        );
-
-        for (const signal of newSignals) {
-          await processSignalForTrading(signal);
-        }
-      }
-    },
-    [generateSignalsFromCachedData]
-  );
-
-  // 🎯 신호 기반 거래 처리 (실제 사용됨)
-  const processSignalForTrading = useCallback(
-    async (signal) => {
-      try {
-        const currentMarketData = marketData.get(signal.symbol);
-        if (!currentMarketData) {
-          addLog(`❌ [${signal.symbol}] 시장 데이터 없음`, "warning");
-          return false;
-        }
-
-        const adjustedScore = Math.max(signal.totalScore, 6.0);
-        const enhancedSignal = {
-          ...signal,
-          totalScore: adjustedScore,
-          confidence: signal.confidence || "medium",
-          price: currentMarketData.trade_price,
-          volume24h: currentMarketData.acc_trade_price_24h,
-        };
-
-        addLog(
-          `🔍 [${signal.symbol}] 신호 처리: ${enhancedSignal.totalScore.toFixed(1)}점`,
-          "info"
-        );
-
-        // 🎯 동적 포지션 관리 검증 (positionSizing 실제 사용)
-        if (dynamicPositionEnabled) {
-          const portfolioState = {
-            totalValue: portfolio?.totalValue || 0,
-            totalCash: portfolio?.krw || 0,
-            availableCash: portfolio?.krw || 0,
-            positions: portfolio?.positions || [],
-            cashRatio: (portfolio?.cashRatio || 100) / 100,
-          };
-
-          if (signal.type === "BUY") {
-            // ✅ positionSizing 서비스 실제 사용
-            const optimalSize = positionSizing.calculateOptimalPosition(
-              enhancedSignal,
-              portfolioState,
-              tradingSettingsRef.current
-            );
-
-            const entryCheck = dynamicPositionManager.shouldEnterPosition(
-              enhancedSignal,
-              portfolioState.positions,
-              portfolioState
-            );
-
-            if (!entryCheck.enter) {
-              addLog(
-                `📊 [${signal.symbol}] 동적 진입 거부: ${entryCheck.reason}`,
-                "info"
-              );
-              return false;
-            }
-
-            // 최적 포지션 크기 적용
-            enhancedSignal.positionSize = optimalSize;
-            addLog(
-              `📊 [${signal.symbol}] 동적 진입 승인: ${entryCheck.reason}, 포지션 크기: ${optimalSize}`,
-              "success"
-            );
-          }
-        }
-
-        const result = await paperTradingEngine.executeSignal(enhancedSignal);
-
-        if (result?.executed) {
-          addLog(
-            `✅ [${signal.symbol}] 거래 성공: ${signal.type} ₩${enhancedSignal.price.toLocaleString()}`,
-            "success"
-          );
-
-          updateSignalStatus(signal.id, "executed", result);
-
-          if (dynamicPositionEnabled) {
-            setTimeout(() => {
-              updatePositionAnalysis();
-              updateRiskAssessment();
-            }, 2000);
-          }
-
-          setTimeout(() => {
-            if (isActiveRef.current) {
-              updatePortfolio(true);
-            }
-          }, 1000);
-
-          return true;
-        } else {
-          addLog(
-            `❌ [${signal.symbol}] 거래 실패: ${result?.reason || "알 수 없는 원인"}`,
-            "error"
-          );
-          updateSignalStatus(signal.id, "failed", result);
-          return false;
-        }
-      } catch (error) {
-        addLog(
-          `💥 [${signal.symbol}] 거래 처리 오류: ${error.message}`,
-          "error"
-        );
-        updateSignalStatus(signal.id, "error", { error: error.message });
-        return false;
-      }
-    },
-    [
-      addLog,
-      updatePortfolio,
-      marketData,
-      dynamicPositionEnabled,
-      portfolio,
-      updateSignalStatus,
-    ]
-  );
-
-  // 🎯 포지션 분석 업데이트 (실제 사용됨)
+  // 🔥 포지션 분석 업데이트 (먼저 선언)
   const updatePositionAnalysis = useCallback(async () => {
-    if (!dynamicPositionEnabled || !portfolio) return;
+    if (!dynamicPositionEnabled || !portfolio || !mountedRef.current) return;
 
     try {
       const currentPositions = portfolio.positions || [];
       const analysis = {
         totalPositions: currentPositions.length,
-        profitablePositions: currentPositions.filter((p) => p.profitRate > 0)
+        profitablePositions: currentPositions.filter(
+          (p) => (p.profitRate || 0) > 0
+        ).length,
+        lossPositions: currentPositions.filter((p) => (p.profitRate || 0) < 0)
           .length,
-        lossPositions: currentPositions.filter((p) => p.profitRate < 0).length,
         averageProfit:
           currentPositions.length > 0
-            ? currentPositions.reduce((sum, p) => sum + p.profitRate, 0) /
-              currentPositions.length
+            ? currentPositions.reduce(
+                (sum, p) => sum + (p.profitRate || 0),
+                0
+              ) / currentPositions.length
             : 0,
         recommendations: [],
       };
 
-      const swapOpportunity = dynamicPositionManager.evaluatePositionSwap(
-        currentPositions,
-        signals
-      );
-
-      if (swapOpportunity) {
-        analysis.recommendations.push({
-          type: "SWAP",
-          message: `${swapOpportunity.sellPosition.symbol} → ${swapOpportunity.buySignal.symbol} 교체 고려`,
-          priority: "HIGH",
-        });
+      try {
+        const swapOpportunity = dynamicPositionManager.evaluatePositionSwap(
+          currentPositions,
+          signals
+        );
+        if (swapOpportunity) {
+          analysis.recommendations.push({
+            type: "SWAP",
+            message: `${swapOpportunity.sellPosition.symbol} → ${swapOpportunity.buySignal.symbol} 교체 고려`,
+            priority: "HIGH",
+          });
+        }
+      } catch (error) {
+        console.warn("포지션 교체 분석 실패:", error);
       }
 
       setPositionAnalysis(analysis);
@@ -486,9 +420,9 @@ export const usePaperTrading = (
     }
   }, [dynamicPositionEnabled, portfolio, addLog, signals]);
 
-  // 🎯 리스크 평가 업데이트 (실제 사용됨)
+  // 🔥 리스크 평가 업데이트 (먼저 선언)
   const updateRiskAssessment = useCallback(async () => {
-    if (!dynamicPositionEnabled || !portfolio) return;
+    if (!dynamicPositionEnabled || !portfolio || !mountedRef.current) return;
 
     try {
       const portfolioHealth = {
@@ -535,9 +469,9 @@ export const usePaperTrading = (
     }
   }, [dynamicPositionEnabled, portfolio, marketCondition, addLog]);
 
-  // 🎯 현금 최적화 (실제 사용됨)
+  // 🔥 현금 최적화 (먼저 선언)
   const updateCashOptimization = useCallback(async () => {
-    if (!dynamicPositionEnabled || !portfolio) return;
+    if (!dynamicPositionEnabled || !portfolio || !mountedRef.current) return;
 
     try {
       const optimization = {
@@ -557,27 +491,15 @@ export const usePaperTrading = (
     }
   }, [dynamicPositionEnabled, portfolio, riskAssessment, addLog]);
 
-  // ✅ 코인 필터링 (실제 사용됨)
-  const isInvestableSymbol = useCallback((symbol) => {
-    const stableCoins = ["USDT", "USDC", "BUSD", "DAI", "TUSD", "USDD"];
-    const riskyCoins = ["LUNA", "UST", "LUNC", "USTC"];
-    return (
-      !stableCoins.some((stable) => symbol.toUpperCase().includes(stable)) &&
-      !riskyCoins.some((risky) => symbol.toUpperCase().includes(risky))
-    );
-  }, []);
-
-  // ✅ 상위 코인 업데이트 (upbitMarketService 실제 사용)
+  // 🔥 상위 코인 업데이트 (먼저 선언)
   const updateTopCoinsUI = useCallback(async () => {
-    if (tradingModeRef.current !== "top") {
+    if (!mountedRef.current || tradingModeRef.current !== "top") {
       addLog("상위코인 모드가 아니므로 업데이트 건너뜀", "info");
       return [];
     }
 
     try {
       addLog("🔄 상위 코인 업데이트 시작", "info");
-
-      // ✅ upbitMarketService 실제 사용
       const topCoinsData = await upbitMarketService.getTopCoins(
         topCoinsLimit,
         testModeRef.current
@@ -587,6 +509,16 @@ export const usePaperTrading = (
         addLog("상위 코인 데이터 없음", "warning");
         return [];
       }
+
+      const isInvestableSymbol = (symbol) => {
+        const stableCoins = ["USDT", "USDC", "BUSD", "DAI", "TUSD", "USDD"];
+        const riskyCoins = ["LUNA", "UST", "LUNC", "USTC"];
+        return (
+          !stableCoins.some((stable) =>
+            symbol.toUpperCase().includes(stable)
+          ) && !riskyCoins.some((risky) => symbol.toUpperCase().includes(risky))
+        );
+      };
 
       const formattedCoins = topCoinsData
         .map((coin, index) => ({
@@ -607,317 +539,172 @@ export const usePaperTrading = (
             coin.symbol && coin.market && isInvestableSymbol(coin.symbol)
         );
 
-      setTopCoins(formattedCoins);
+      if (mountedRef.current) {
+        setTopCoins(formattedCoins);
 
-      try {
-        // ✅ hybridSignalGenerator 실제 사용
-        await hybridSignalGenerator.updateWatchedCoins(
-          favoriteCoins.map((c) => c.symbol),
-          formattedCoins.map((c) => c.symbol)
-        );
-        addLog("상위 코인 뉴스 캐시 업데이트 완료", "info");
-      } catch (newsError) {
-        addLog(`뉴스 캐시 업데이트 실패: ${newsError.message}`, "warning");
+        try {
+          await hybridSignalGenerator.updateWatchedCoins(
+            favoriteCoins.map((c) => c.symbol),
+            formattedCoins.map((c) => c.symbol)
+          );
+          addLog("상위 코인 뉴스 캐시 업데이트 완료", "info");
+        } catch (newsError) {
+          addLog(`뉴스 캐시 업데이트 실패: ${newsError.message}`, "warning");
+        }
+
+        addLog(`상위 코인 ${formattedCoins.length}개 업데이트 완료`, "success");
       }
 
-      addLog(`상위 코인 ${formattedCoins.length}개 업데이트 완료`, "success");
       return formattedCoins;
     } catch (error) {
       addLog(`상위 코인 업데이트 실패: ${error.message}`, "error");
       return [];
     }
-  }, [
-    topCoinsLimit,
-    addLog,
-    favoriteCoins,
-    selectedMarket,
-    isInvestableSymbol,
-  ]);
+  }, [topCoinsLimit, addLog, favoriteCoins, selectedMarket]);
 
-  // ✅ 관심코인 추가 (hybridSignalGenerator 실제 사용)
-  const addFavoriteCoin = useCallback(
-    async (coin) => {
-      try {
-        const result = addCoinToStore(coin.market);
-        if (result.success) {
-          addLog(`${coin.symbol} 관심코인에 추가됨`, "success");
-
-          try {
-            const updatedFavorites = [
-              ...favoriteCoins,
-              { ...coin, isTopCoin: false },
-            ];
-
-            // ✅ hybridSignalGenerator 실제 사용
-            await hybridSignalGenerator.updateWatchedCoins(
-              updatedFavorites.map((c) => c.symbol),
-              topCoins.map((c) => c.symbol)
-            );
-            addLog(`${coin.symbol} 뉴스 분석 캐시 업데이트 시작`, "info");
-          } catch (error) {
-            addLog(`뉴스 캐시 업데이트 실패: ${error.message}`, "warning");
-          }
-        } else {
-          addLog(result.message, "warning");
-        }
-      } catch (error) {
-        addLog(`관심코인 추가 실패: ${error.message}`, "error");
-      }
-    },
-    [addCoinToStore, addLog, favoriteCoins, topCoins]
-  );
-
-  // ✅ 관심코인 제거
-  const removeFavoriteCoin = useCallback(
-    (market) => {
-      try {
-        const result = removeCoinFromStore(market);
-        if (result.success) {
-          addLog(result.message, "info");
-        } else {
-          addLog(result.message, "warning");
-        }
-      } catch (error) {
-        addLog(`관심코인 제거 실패: ${error.message}`, "error");
-      }
-    },
-    [removeCoinFromStore, addLog]
-  );
-
-  // ✅ 시장 조건 업데이트 (marketAnalysisService 실제 사용)
-  const updateMarketCondition = useCallback(async () => {
-    if (!isActiveRef.current) return null;
+  // 🔥 동적 포지션 관리 초기화
+  const initializeDynamicPositionManagement = useCallback(async () => {
+    if (!mountedRef.current || !dynamicPositionEnabled) {
+      addLog("동적 포지션 관리가 비활성화됨", "info");
+      return true;
+    }
 
     try {
-      addLog("시장 조건 분석 중", "info");
+      addLog("🎯 동적 포지션 관리 시스템 초기화", "info");
+      paperTradingEngine.setDynamicPositionEnabled(true);
 
-      // ✅ marketAnalysisService 실제 사용
-      const condition = await marketAnalysisService.analyzeMarketCondition();
-
-      if (isActiveRef.current) {
-        setMarketCondition(condition);
-
-        if (dynamicPositionEnabled) {
-          paperTradingEngine.updateMarketCondition(condition);
-        }
-
-        updateStats((prev) => ({
-          ...prev,
-          marketConditionsChecked: prev.marketConditionsChecked + 1,
-        }));
-
-        const message = condition.isBuyableMarket
-          ? `시장 분석 완료: ${condition.buyability?.level} (${condition.overallBuyScore?.toFixed(1)}점)`
-          : `시장 조건 부적절: ${condition.buyability?.level} (${condition.overallBuyScore?.toFixed(1)}점)`;
-
-        addLog(message, condition.isBuyableMarket ? "info" : "warning");
+      if (marketCondition) {
+        paperTradingEngine.updateMarketCondition(marketCondition);
       }
 
-      return condition;
+      addLog("✅ 동적 포지션 관리 시스템 초기화 완료", "success");
+      return true;
     } catch (error) {
-      if (isActiveRef.current) {
-        addLog(`시장 분석 실패: ${error.message}`, "error");
-      }
-      return null;
+      addLog(`❌ 동적 포지션 관리 초기화 실패: ${error.message}`, "error");
+      return false;
     }
-  }, [addLog, updateStats, dynamicPositionEnabled]);
+  }, [dynamicPositionEnabled, marketCondition, addLog]);
 
-  // ✅ 설정 변경 핸들러 (완전 구현)
-  const handleSettingsChange = useCallback(
-    (newSettings) => {
-      console.log("🔧 거래 설정 업데이트 전:", tradingSettings);
-      console.log("🔧 새로운 설정:", newSettings);
+  // 🔥 중앙 시스템 초기화
+  const initializeCentralSystem = useCallback(async () => {
+    if (!mountedRef.current || systemInitializedRef.current) {
+      addLog("🔄 중앙 시스템 이미 초기화됨", "info");
+      return true;
+    }
 
-      if (
-        newSettings.initialCapital &&
-        newSettings.initialCapital !== customCapital
-      ) {
-        setCustomCapital(newSettings.initialCapital);
+    try {
+      systemInitializedRef.current = true;
+      addLog("🚀 중앙 데이터 매니저 초기화 시작", "info");
 
-        if (!isActiveRef.current) {
-          paperTradingEngine.resetPortfolio(newSettings.initialCapital);
-        }
+      const initialCoins =
+        currentSelectedCoins.length > 0
+          ? currentSelectedCoins.map((c) => c.symbol)
+          : ["BTC", "ETH"];
+
+      // 1단계: 중앙 데이터 매니저 초기화
+      try {
+        await centralDataManager.initialize(initialCoins);
+        addLog("✅ 중앙 데이터 매니저 초기화 완료", "success");
+      } catch (error) {
+        addLog(
+          `⚠️ 중앙 데이터 매니저 초기화 실패, 계속 진행: ${error.message}`,
+          "warning"
+        );
       }
 
-      setTradingSettings((prev) => {
-        const currentSettings = prev;
-        const updated = { ...currentSettings, ...newSettings };
+      // 2단계: 신호 생성기 초기화
+      try {
+        await signalGenerator.initialize(centralDataManager);
+        signalGenerator.setTestMode(testModeRef.current);
+        setSignalGeneratorReady(true);
+        addLog("✅ 신호 생성기 초기화 완료", "success");
+      } catch (error) {
+        addLog(
+          `⚠️ 신호 생성기 초기화 실패, 기본 모드로 진행: ${error.message}`,
+          "warning"
+        );
+        setSignalGeneratorReady(true);
+      }
 
-        // 설정 검증
-        if (updated.tradingConditions?.buyConditions) {
-          const minBuy = updated.tradingConditions.buyConditions.minBuyScore;
-          if (minBuy !== undefined) {
-            updated.tradingConditions.buyConditions.minBuyScore = Math.max(
-              3.0,
-              Math.min(10.0, minBuy)
-            );
-          }
+      // 3단계: 연결 매니저 초기화
+      try {
+        const connectionReady = await initializeConnection(initialCoins);
+        if (connectionReady) {
+          addLog("✅ 연결 매니저 초기화 완료", "success");
         }
+      } catch (error) {
+        addLog(
+          `⚠️ 연결 매니저 초기화 실패, 계속 진행: ${error.message}`,
+          "warning"
+        );
+      }
 
-        // 신호 생성기에 설정 전달
-        if (signalGenerator && signalGenerator.updateSettings) {
-          signalGenerator.updateSettings(updated);
-        }
+      setCentralDataReady(true);
 
-        // 페이퍼 트레이딩 엔진에 설정 전달
-        if (paperTradingEngine && paperTradingEngine.updateSettings) {
-          paperTradingEngine.updateSettings(updated);
-        }
+      // 4단계: 동적 포지션 관리 초기화
+      await initializeDynamicPositionManagement();
 
-        // 동적 포지션 관리 설정 업데이트
-        if (updated.dynamicPosition) {
-          setDynamicPositionEnabled(updated.dynamicPosition.enabled);
-          paperTradingEngine.setDynamicPositionEnabled?.(
-            updated.dynamicPosition.enabled
+      if (mountedRef.current) {
+        addLog("🎯 중앙 시스템 완전 초기화 완료", "success");
+      }
+
+      return true;
+    } catch (error) {
+      systemInitializedRef.current = false;
+      addLog(`❌ 중앙 시스템 초기화 실패: ${error.message}`, "error");
+      return false;
+    }
+  }, [
+    currentSelectedCoins,
+    addLog,
+    initializeDynamicPositionManagement,
+    initializeConnection,
+  ]);
+
+  // 🔥 Store 초기화
+  const initializeStore = useCallback(async () => {
+    if (!mountedRef.current || isStoreInitialized || initializationRef.current)
+      return;
+
+    try {
+      initializationRef.current = true;
+      addLog("🚀 Store 초기화 시작", "info");
+
+      if (!isInitialized) {
+        await initializeData(true);
+      }
+
+      const currentSelectedCoins = useCoinStore.getState().selectedCoins;
+
+      if (mountedRef.current) {
+        if (currentSelectedCoins.length > 0) {
+          const formattedCoins = currentSelectedCoins.map((coin) => ({
+            ...coin,
+            isTopCoin: false,
+          }));
+          setFavoriteCoins(formattedCoins);
+          setCurrentSelectedCoins(formattedCoins);
+          addLog(
+            `초기화 시 관심코인 ${currentSelectedCoins.length}개 동기화`,
+            "success"
           );
         }
 
-        // 전역 설정 업데이트
-        if (typeof window !== "undefined") {
-          window.tradingStore = {
-            getState: () => ({
-              tradingSettings: updated,
-            }),
-          };
-        }
-
-        console.log("🔧 거래 설정 업데이트 후:", updated);
-        addLog(
-          `✅ 거래 설정 업데이트 완료 - minBuyScore: ${updated.tradingConditions?.buyConditions?.minBuyScore || updated.minBuyScore}`,
-          "success"
-        );
-
-        return updated;
-      });
-    },
-    [
-      customCapital,
-      testMode,
-      addLog,
-      setDynamicPositionEnabled,
-      signalGenerator,
-      paperTradingEngine,
-      tradingSettings,
-    ]
-  );
-
-  // ✅ 마켓 변경 핸들러
-  const changeMarket = useCallback(
-    async (newMarket) => {
-      if (isActive) {
-        alert("거래 중에는 마켓을 변경할 수 없습니다.");
-        return false;
+        setIsStoreInitialized(true);
+        addLog("✅ Store 초기화 완료", "success");
       }
-
-      if (newMarket === selectedMarket) return true;
-
-      try {
-        addLog(`🔄 마켓 변경: ${selectedMarket} → ${newMarket}`, "info");
-
-        upbitMarketService.setMarketType(newMarket);
-        setSelectedMarket(newMarket);
-        setMarketData(new Map());
-        setCurrentSelectedCoins([]);
-        setFavoriteCoins([]);
-        clearSignals();
-
-        if (isSystemInitialized.current) {
-          isSystemInitialized.current = false;
-          await initializeCentralSystem();
-        }
-
-        addLog(`✅ ${newMarket} 마켓으로 변경 완료`, "success");
-        return true;
-      } catch (error) {
-        addLog(`마켓 변경 실패: ${error.message}`, "error");
-        return false;
-      }
-    },
-    [selectedMarket, isActive, addLog, initializeCentralSystem, clearSignals]
-  );
-
-  // ✅ 중앙화된 리소스 정리 함수 (실제 사용됨)
-  const cleanupAllResources = useCallback(() => {
-    console.log("🧹 모든 리소스 정리 시작...");
-    isActiveRef.current = false;
-    setIsActive(false);
-
-    [
-      portfolioIntervalRef,
-      marketAnalysisIntervalRef,
-      topCoinsUpdateIntervalRef,
-      reconnectTimeoutRef,
-      optimizationIntervalRef,
-      riskCheckIntervalRef,
-    ].forEach((ref) => {
-      if (ref.current) {
-        clearInterval(ref.current);
-        clearTimeout(ref.current);
-        ref.current = null;
-      }
-    });
-
-    // 분리된 훅들의 cleanup 호출
-    cleanupConnection();
-    clearSignals();
-
-    try {
-      upbitWebSocketService.disconnect();
     } catch (error) {
-      console.warn("웹소켓 해제 중 오류:", error);
-    }
-
-    if (signalGeneratorReady) {
-      try {
-        signalGenerator.cleanup();
-        setSignalGeneratorReady(false);
-      } catch (error) {
-        console.warn("SignalGenerator 정리 중 오류:", error);
+      if (mountedRef.current) {
+        addLog(`❌ Store 초기화 실패: ${error.message}`, "error");
       }
+    } finally {
+      initializationRef.current = false;
     }
+  }, [isStoreInitialized, isInitialized, initializeData, addLog]);
 
-    isSystemInitialized.current = false;
-    setCentralDataReady(false);
-
-    // 동적 관리 상태 초기화
-    setOptimizationPlan(null);
-    setPositionAnalysis(null);
-    setRiskAssessment(null);
-    setCashOptimization(null);
-
-    console.log("✅ 모든 리소스 정리 완료");
-  }, [cleanupConnection, clearSignals, signalGeneratorReady]);
-
-  // ✅ Store 초기화
-  const initializeStore = useCallback(async () => {
-    if (isStoreInitialized) return;
-
-    try {
-      addLog("🚀 Store 초기화 시작", "info");
-      await initializeData(true);
-
-      const currentSelectedCoins = useCoinStore.getState().selectedCoins;
-      if (currentSelectedCoins.length > 0) {
-        setFavoriteCoins(
-          currentSelectedCoins.map((coin) => ({ ...coin, isTopCoin: false }))
-        );
-        addLog(
-          `초기화 시 관심코인 ${currentSelectedCoins.length}개 동기화`,
-          "success"
-        );
-      }
-
-      setIsStoreInitialized(true);
-      addLog("✅ Store 초기화 완료", "success");
-    } catch (error) {
-      addLog(`❌ Store 초기화 실패: ${error.message}`, "error");
-      throw error;
-    }
-  }, [isStoreInitialized, initializeData, addLog]);
-
-  // ✅ 페이퍼 트레이딩 시작 (완전 구현)
+  // 🔥 페이퍼 트레이딩 시작
   const startPaperTrading = useCallback(async () => {
-    if (isActiveRef.current) {
+    if (!mountedRef.current || isActiveRef.current) {
       addLog("이미 거래가 활성화되어 있습니다", "warning");
       return;
     }
@@ -928,7 +715,7 @@ export const usePaperTrading = (
     }
 
     try {
-      console.log("🚀 페이퍼 트레이딩 시작 중...");
+      console.log("🚀 페이퍼 트레이딩 시작");
 
       if (!isStoreInitialized) {
         await initializeStore();
@@ -939,101 +726,131 @@ export const usePaperTrading = (
         throw new Error("중앙 시스템 초기화 실패");
       }
 
-      setIsActive(true);
-      isActiveRef.current = true;
-      clearSignals();
-      resetStats();
+      if (mountedRef.current) {
+        setIsActive(true);
+        isActiveRef.current = true;
 
-      paperTradingEngine.setTestMode(testModeRef.current);
-      paperTradingEngine.setActive(true);
+        paperTradingEngine.setTestMode(testModeRef.current);
+        paperTradingEngine.setActive(true);
 
-      if (dynamicPositionEnabled) {
-        paperTradingEngine.setDynamicPositionEnabled(true);
-        addLog("🎯 동적 포지션 관리 활성화", "success");
-      }
-
-      try {
-        const watchlistSymbols = favoriteCoins.map((c) => c.symbol);
-        const topCoinsSymbols = topCoins.map((c) => c.symbol);
-        await hybridSignalGenerator.updateWatchedCoins(
-          watchlistSymbols,
-          topCoinsSymbols
-        );
-        addLog("하이브리드 뉴스 분석 시스템 초기화 완료", "success");
-      } catch (newsError) {
-        addLog(`뉴스 시스템 초기화 실패: ${newsError.message}`, "warning");
-      }
-
-      addLog(
-        `${testModeRef.current ? "테스트" : "실전"} ${selectedMarket} ${dynamicPositionEnabled ? "동적" : "고정"} 포지션 관리 페이퍼 트레이딩 시작`,
-        "success"
-      );
-
-      // 초기 분석 실행
-      await Promise.all([updateMarketCondition(), fetchMarketSentiment()]);
-      await updatePortfolio(true);
-
-      // 주기적 업데이트 설정
-      if (isActiveRef.current) {
-        marketAnalysisIntervalRef.current = setInterval(async () => {
-          if (isActiveRef.current) {
-            await updateMarketCondition();
-          }
-        }, 600000); // 10분마다
-
-        portfolioIntervalRef.current = setInterval(() => {
-          if (isActiveRef.current && !isLoading) {
-            updatePortfolio(false);
-          }
-        }, 30000); // 30초마다
-
-        if (tradingMode === "top") {
-          topCoinsUpdateIntervalRef.current = setInterval(async () => {
-            if (
-              isActiveRef.current &&
-              tradingModeRef.current === "top" &&
-              favoriteCoins.length === 0
-            ) {
-              await updateTopCoinsUI();
-            }
-          }, 300000); // 5분마다
-        }
-
-        // 동적 포지션 관리 주기적 업데이트
         if (dynamicPositionEnabled) {
-          optimizationIntervalRef.current = setInterval(() => {
-            if (isActiveRef.current) {
-              updatePositionAnalysis();
-              updateRiskAssessment();
-              updateCashOptimization();
-            }
-          }, 120000); // 2분마다
+          paperTradingEngine.setDynamicPositionEnabled(true);
+          addLog("🎯 동적 포지션 관리 활성화", "success");
         }
-      }
 
-      const modeText = testModeRef.current
-        ? "테스트 모드: 완화된 조건으로 더 많은 거래 기회"
-        : "실전 모드: 엄격한 조건으로 신중한 거래";
-      addLog(modeText, "info");
+        clearSignals();
+        resetStats();
 
-      addLog(
-        `거래 대상: ${
-          tradingMode === "top"
-            ? `상위 ${topCoinsLimit}개 코인`
-            : `관심 코인 ${favoriteCoins.length}개`
-        } (${selectedMarket} 마켓)`,
-        "info"
-      );
+        // 하이브리드 뉴스 시스템 초기화
+        try {
+          const watchlistSymbols = favoriteCoins.map((c) => c.symbol);
+          const topCoinsSymbols = topCoins.map((c) => c.symbol);
+          await hybridSignalGenerator.updateWatchedCoins(
+            watchlistSymbols,
+            topCoinsSymbols
+          );
+          addLog("하이브리드 뉴스 분석 시스템 초기화 완료", "success");
+        } catch (newsError) {
+          addLog(`뉴스 시스템 초기화 실패: ${newsError.message}`, "warning");
+        }
 
-      const logStatus = getLogSystemStatus();
-      if (!logStatus.isHealthy) {
-        addLog(`로그 시스템 과부하: ${logStatus.logsPerSecond}/초`, "warning");
+        addLog(
+          `${testModeRef.current ? "테스트" : "실전"} ${selectedMarket} ${
+            dynamicPositionEnabled ? "동적" : "고정"
+          } 포지션 관리 페이퍼 트레이딩 시작`,
+          "success"
+        );
+
+        // 초기 분석 실행
+        try {
+          await Promise.all([updateMarketCondition(), fetchMarketSentiment()]);
+          await updatePortfolio(true);
+        } catch (analysisError) {
+          addLog(`초기 분석 실행 실패: ${analysisError.message}`, "warning");
+        }
+
+        // 주기적 업데이트 설정
+        if (isActiveRef.current) {
+          marketAnalysisIntervalRef.current = setInterval(async () => {
+            if (isActiveRef.current && mountedRef.current) {
+              try {
+                await updateMarketCondition();
+              } catch (error) {
+                console.warn("시장 분석 업데이트 실패:", error);
+              }
+            }
+          }, 600000);
+
+          portfolioIntervalRef.current = setInterval(() => {
+            if (isActiveRef.current && mountedRef.current && !isLoading) {
+              try {
+                updatePortfolio(false);
+              } catch (error) {
+                console.warn("포트폴리오 업데이트 실패:", error);
+              }
+            }
+          }, 30000);
+
+          if (tradingMode === "top") {
+            topCoinsUpdateIntervalRef.current = setInterval(async () => {
+              if (
+                isActiveRef.current &&
+                mountedRef.current &&
+                tradingModeRef.current === "top"
+              ) {
+                try {
+                  await updateTopCoinsUI();
+                } catch (error) {
+                  console.warn("상위 코인 업데이트 실패:", error);
+                }
+              }
+            }, 300000);
+          }
+
+          if (dynamicPositionEnabled) {
+            optimizationIntervalRef.current = setInterval(() => {
+              if (isActiveRef.current && mountedRef.current) {
+                try {
+                  updatePositionAnalysis();
+                  updateRiskAssessment();
+                  updateCashOptimization();
+                } catch (error) {
+                  console.warn("동적 포지션 관리 업데이트 실패:", error);
+                }
+              }
+            }, 120000);
+          }
+        }
+
+        const modeText = testModeRef.current
+          ? "테스트 모드: 완화된 조건으로 더 많은 거래 기회"
+          : "실전 모드: 엄격한 조건으로 신중한 거래";
+        addLog(modeText, "info");
+
+        addLog(
+          `거래 대상: ${
+            tradingMode === "top"
+              ? `상위 ${topCoinsLimit}개 코인`
+              : `관심 코인 ${favoriteCoins.length}개`
+          } (${selectedMarket} 마켓)`,
+          "info"
+        );
+
+        const logStatus = getLogSystemStatus();
+        if (!logStatus.isHealthy) {
+          addLog(
+            `로그 시스템 과부하: ${logStatus.logsPerSecond}/초`,
+            "warning"
+          );
+        }
       }
     } catch (error) {
-      addLog(`시작 실패: ${error.message}`, "error");
-      setIsActive(false);
-      isActiveRef.current = false;
-      cleanupAllResources();
+      if (mountedRef.current) {
+        addLog(`시작 실패: ${error.message}`, "error");
+        setIsActive(false);
+        isActiveRef.current = false;
+        cleanupAllResources();
+      }
     }
   }, [
     tradingMode,
@@ -1060,11 +877,14 @@ export const usePaperTrading = (
     updateCashOptimization,
   ]);
 
-  // ✅ 페이퍼 트레이딩 중지 (완전 구현)
+  // 🔥 페이퍼 트레이딩 중지
   const stopPaperTrading = useCallback(() => {
+    if (!mountedRef.current) return;
+
     console.log(`🛑 ${selectedMarket} 페이퍼 트레이딩 중지 시작...`);
     setIsActive(false);
     isActiveRef.current = false;
+
     clearSignals();
     cleanupAllResources();
 
@@ -1093,7 +913,317 @@ export const usePaperTrading = (
     clearSignals,
   ]);
 
-  // ✅ 테스트 모드 토글 (완전 구현)
+  // ✅ 나머지 함수들 (신호 처리, 관심코인 관리 등)
+  const processSignalForTrading = useCallback(
+    async (signal) => {
+      if (!mountedRef.current || !isActiveRef.current) return false;
+
+      try {
+        const currentMarketData = marketData.get(signal.symbol);
+        if (!currentMarketData) {
+          addLog(`❌ [${signal.symbol}] 시장 데이터 없음`, "warning");
+          return false;
+        }
+
+        const enhancedSignal = {
+          ...signal,
+          totalScore: Math.max(signal.totalScore || 0, 6.0),
+          confidence: signal.confidence || "medium",
+          price: currentMarketData.trade_price || 0,
+          volume24h: currentMarketData.acc_trade_price_24h || 0,
+        };
+
+        addLog(
+          `🔍 [${signal.symbol}] 신호 처리: ${enhancedSignal.totalScore.toFixed(1)}점`,
+          "info"
+        );
+
+        if (dynamicPositionEnabled && signal.type === "BUY") {
+          const portfolioState = {
+            totalValue: portfolio?.totalValue || 0,
+            totalCash: portfolio?.krw || 0,
+            availableCash: portfolio?.krw || 0,
+            positions: portfolio?.positions || [],
+            cashRatio: (portfolio?.cashRatio || 100) / 100,
+          };
+
+          try {
+            const optimalSize = positionSizing.calculateOptimalPosition(
+              enhancedSignal,
+              portfolioState,
+              tradingSettingsRef.current
+            );
+
+            const entryCheck = dynamicPositionManager.shouldEnterPosition(
+              enhancedSignal,
+              portfolioState.positions,
+              portfolioState
+            );
+
+            if (!entryCheck.enter) {
+              addLog(
+                `📊 [${signal.symbol}] 동적 진입 거부: ${entryCheck.reason}`,
+                "info"
+              );
+              return false;
+            }
+
+            enhancedSignal.positionSize = optimalSize;
+            addLog(
+              `📊 [${signal.symbol}] 동적 진입 승인: ${entryCheck.reason}, 포지션 크기: ${optimalSize}`,
+              "success"
+            );
+          } catch (error) {
+            addLog(`동적 포지션 관리 오류: ${error.message}`, "warning");
+          }
+        }
+
+        const result = await paperTradingEngine.executeSignal(enhancedSignal);
+
+        if (result?.executed) {
+          addLog(
+            `✅ [${signal.symbol}] 거래 성공: ${signal.type} ₩${enhancedSignal.price.toLocaleString()}`,
+            "success"
+          );
+          updateSignalStatus(signal.id, "executed", result);
+
+          if (dynamicPositionEnabled) {
+            setTimeout(() => {
+              if (mountedRef.current) {
+                updatePositionAnalysis();
+                updateRiskAssessment();
+              }
+            }, 2000);
+          }
+
+          setTimeout(() => {
+            if (isActiveRef.current && mountedRef.current) {
+              updatePortfolio(true);
+            }
+          }, 1000);
+
+          return true;
+        } else {
+          addLog(
+            `❌ [${signal.symbol}] 거래 실패: ${result?.reason || "알 수 없는 원인"}`,
+            "error"
+          );
+          updateSignalStatus(signal.id, "failed", result);
+          return false;
+        }
+      } catch (error) {
+        addLog(
+          `💥 [${signal.symbol}] 거래 처리 오류: ${error.message}`,
+          "error"
+        );
+        updateSignalStatus(signal.id, "error", { error: error.message });
+        return false;
+      }
+    },
+    [
+      addLog,
+      updatePortfolio,
+      marketData,
+      dynamicPositionEnabled,
+      portfolio,
+      updateSignalStatus,
+      updatePositionAnalysis,
+      updateRiskAssessment,
+    ]
+  );
+
+  const processMarketDataUpdate = useCallback(
+    async (dataMap) => {
+      if (!dataMap || dataMap.size === 0 || !mountedRef.current) return;
+
+      setMarketData(dataMap);
+
+      if (isActiveRef.current && dataMap.size > 0) {
+        try {
+          console.log("🎯 신호 생성 시도 중:", Array.from(dataMap.keys()));
+
+          const newSignals = await generateSignalsFromCachedData(
+            Array.from(dataMap.keys())
+          );
+
+          console.log("🎯 생성된 신호:", newSignals.length, newSignals);
+
+          if (newSignals.length === 0) {
+            addLog(
+              `⚠️ 신호 생성 결과: 0개 (시장 조건 또는 점수 기준 미달)`,
+              "warning"
+            );
+
+            // 🔥 테스트 모드에서 강제 신호 생성 시도
+            if (testModeRef.current && autoStopDisabled) {
+              try {
+                addLog("🎯 테스트 모드: 강제 신호 생성 시도", "info");
+
+                const forceSignals = await generateSignalsFromCachedData(
+                  Array.from(dataMap.keys()),
+                  {
+                    minBuyScore: 3.0, // 매우 낮은 기준
+                    strategy: "force_test",
+                    testMode: true,
+                  }
+                );
+
+                if (forceSignals.length > 0) {
+                  addLog(
+                    `🔥 강제 신호 생성: ${forceSignals.length}개`,
+                    "success"
+                  );
+
+                  for (const signal of forceSignals) {
+                    if (!mountedRef.current || !isActiveRef.current) break;
+                    console.log("🔥 강제 신호 처리 중:", signal);
+                    await processSignalForTrading(signal);
+                  }
+                }
+              } catch (forceError) {
+                addLog(`강제 신호 생성 실패: ${forceError.message}`, "warning");
+              }
+            }
+          } else {
+            for (const signal of newSignals) {
+              if (!mountedRef.current || !isActiveRef.current) break;
+              console.log("🔥 신호 처리 중:", signal);
+              await processSignalForTrading(signal);
+            }
+          }
+        } catch (error) {
+          console.warn("신호 처리 중 오류:", error);
+          addLog(`❌ 신호 처리 오류: ${error.message}`, "error");
+        }
+      }
+    },
+    [
+      generateSignalsFromCachedData,
+      processSignalForTrading,
+      addLog,
+      autoStopDisabled,
+    ]
+  );
+
+  const addFavoriteCoin = useCallback(
+    async (coin) => {
+      if (!mountedRef.current) return;
+
+      try {
+        const result = addCoinToStore(coin.market);
+        if (result.success) {
+          addLog(`${coin.symbol} 관심코인에 추가됨`, "success");
+
+          try {
+            const updatedFavorites = [
+              ...favoriteCoins,
+              { ...coin, isTopCoin: false },
+            ];
+            await hybridSignalGenerator.updateWatchedCoins(
+              updatedFavorites.map((c) => c.symbol),
+              topCoins.map((c) => c.symbol)
+            );
+            addLog(`${coin.symbol} 뉴스 분석 캐시 업데이트 시작`, "info");
+          } catch (error) {
+            addLog(`뉴스 캐시 업데이트 실패: ${error.message}`, "warning");
+          }
+        } else {
+          addLog(result.message, "warning");
+        }
+      } catch (error) {
+        addLog(`관심코인 추가 실패: ${error.message}`, "error");
+      }
+    },
+    [addCoinToStore, addLog, favoriteCoins, topCoins]
+  );
+
+  const removeFavoriteCoin = useCallback(
+    (market) => {
+      if (!mountedRef.current) return;
+
+      try {
+        const result = removeCoinFromStore(market);
+        if (result.success) {
+          addLog(result.message, "info");
+        } else {
+          addLog(result.message, "warning");
+        }
+      } catch (error) {
+        addLog(`관심코인 제거 실패: ${error.message}`, "error");
+      }
+    },
+    [removeCoinFromStore, addLog]
+  );
+
+  // ✅ 나머지 함수들 (설정 변경, 토글 등)
+  const handleSettingsChange = useCallback(
+    (newSettings) => {
+      if (!mountedRef.current) return;
+
+      console.log("🔧 거래 설정 업데이트:", newSettings);
+
+      if (
+        newSettings.initialCapital &&
+        newSettings.initialCapital !== customCapital
+      ) {
+        setCustomCapital(newSettings.initialCapital);
+        if (!isActiveRef.current) {
+          paperTradingEngine.resetPortfolio(newSettings.initialCapital);
+        }
+      }
+
+      setTradingSettings((prev) => {
+        const updated = { ...prev, ...newSettings };
+
+        if (updated.tradingConditions?.buyConditions) {
+          const minBuy = updated.tradingConditions.buyConditions.minBuyScore;
+          if (minBuy !== undefined) {
+            updated.tradingConditions.buyConditions.minBuyScore = Math.max(
+              3.0,
+              Math.min(10.0, minBuy)
+            );
+          }
+        }
+
+        try {
+          if (signalGenerator && signalGenerator.updateSettings) {
+            signalGenerator.updateSettings(updated);
+          }
+        } catch (error) {
+          console.warn("신호 생성기 설정 업데이트 실패:", error);
+        }
+
+        try {
+          if (paperTradingEngine && paperTradingEngine.updateSettings) {
+            paperTradingEngine.updateSettings(updated);
+          }
+        } catch (error) {
+          console.warn("페이퍼 트레이딩 엔진 설정 업데이트 실패:", error);
+        }
+
+        if (updated.dynamicPosition) {
+          setDynamicPositionEnabled(updated.dynamicPosition.enabled);
+          try {
+            paperTradingEngine.setDynamicPositionEnabled?.(
+              updated.dynamicPosition.enabled
+            );
+          } catch (error) {
+            console.warn("동적 포지션 관리 설정 업데이트 실패:", error);
+          }
+        }
+
+        addLog(
+          `✅ 거래 설정 업데이트 완료 - minBuyScore: ${updated.tradingConditions?.buyConditions?.minBuyScore || updated.minBuyScore}`,
+          "success"
+        );
+
+        return updated;
+      });
+    },
+    [customCapital, addLog, setDynamicPositionEnabled]
+  );
+
+  // toggleTestMode 함수 수정
   const toggleTestMode = useCallback(() => {
     if (isActiveRef.current) {
       addLog("거래 중에는 모드를 변경할 수 없습니다", "warning");
@@ -1102,16 +1232,21 @@ export const usePaperTrading = (
 
     setTestMode((prev) => {
       const newTestMode = !prev;
+
+      // 🔥 테스트 모드일 때 자동 중지 비활성화
+      setAutoStopDisabled(newTestMode);
+
       setTradingSettings(getInitialSettings());
+
       const modeText = newTestMode
-        ? "테스트 모드 활성화: 완화된 조건, 더 많은 거래 기회"
-        : "실전 모드 활성화: 엄격한 조건, 신중한 거래";
+        ? "테스트 모드 활성화: 완화된 조건, 더 많은 거래 기회, 자동 중지 비활성화"
+        : "실전 모드 활성화: 엄격한 조건, 신중한 거래, 자동 중지 활성화";
+
       addLog(modeText, "info");
       return newTestMode;
     });
   }, [addLog, getInitialSettings]);
 
-  // ✅ 동적 포지션 관리 토글
   const toggleDynamicPositionManagement = useCallback(() => {
     if (isActiveRef.current) {
       addLog(
@@ -1126,23 +1261,24 @@ export const usePaperTrading = (
       const modeText = newEnabled
         ? "동적 포지션 관리 활성화: 적응적 포지션 크기 및 리밸런싱"
         : "고정 포지션 관리 활성화: 전통적인 고정 크기 포지션";
+
       addLog(modeText, "info");
       return newEnabled;
     });
   }, [addLog]);
 
-  // ✅ 최적화 계획 생성
   const generateOptimizationPlan = useCallback(async () => {
-    if (!dynamicPositionEnabled || !portfolio) return null;
+    if (!dynamicPositionEnabled || !portfolio || !mountedRef.current)
+      return null;
 
     try {
       addLog("📋 포지션 최적화 계획 생성 중...", "info");
       const plan = await paperTradingEngine.generateOptimizationPlan(signals);
 
-      if (plan) {
+      if (plan && mountedRef.current) {
         setOptimizationPlan(plan);
         addLog(
-          `📋 최적화 계획 생성 완료: ${plan.actions.length}개 액션`,
+          `📋 최적화 계획 생성 완료: ${plan.actions?.length || 0}개 액션`,
           "success"
         );
       }
@@ -1154,36 +1290,35 @@ export const usePaperTrading = (
     }
   }, [dynamicPositionEnabled, portfolio, signals, addLog]);
 
-  // ✅ 최적화 계획 실행
   const executeOptimizationPlan = useCallback(
     async (plan = null) => {
       const targetPlan = plan || optimizationPlan;
-      if (!targetPlan) {
+      if (!targetPlan || !mountedRef.current) {
         addLog("실행할 최적화 계획이 없습니다", "warning");
         return false;
       }
 
       try {
         addLog(
-          `🚀 최적화 계획 실행: ${targetPlan.actions.length}개 액션`,
+          `🚀 최적화 계획 실행: ${targetPlan.actions?.length || 0}개 액션`,
           "info"
         );
 
         const result =
           await paperTradingEngine.executeOptimizationPlan(targetPlan);
 
-        if (result.executed) {
+        if (result.executed && mountedRef.current) {
           addLog(
-            `✅ 최적화 계획 실행 완료: ${
-              result.results.filter((r) => r.success).length
-            }개 성공`,
+            `✅ 최적화 계획 실행 완료: ${result.results?.filter((r) => r.success).length || 0}개 성공`,
             "success"
           );
 
           setTimeout(() => {
-            updatePortfolio(true);
-            updatePositionAnalysis();
-            updateRiskAssessment();
+            if (mountedRef.current) {
+              updatePortfolio(true);
+              updatePositionAnalysis();
+              updateRiskAssessment();
+            }
           }, 2000);
 
           return true;
@@ -1205,136 +1340,171 @@ export const usePaperTrading = (
     ]
   );
 
-  // ✅ 중앙 데이터 업데이트 처리
-  useEffect(() => {
-    const originalHandler = handleCentralDataUpdate;
-    const enhancedHandler = (data) => {
-      const dataMap = originalHandler(data);
-      if (dataMap) {
-        processMarketDataUpdate(dataMap);
+  const changeMarket = useCallback(
+    async (newMarket) => {
+      if (isActive) {
+        alert("거래 중에는 마켓을 변경할 수 없습니다.");
+        return false;
       }
-      return dataMap;
+
+      if (newMarket === selectedMarket) return true;
+
+      try {
+        addLog(`🔄 마켓 변경: ${selectedMarket} → ${newMarket}`, "info");
+        upbitMarketService.setMarketType(newMarket);
+        setSelectedMarket(newMarket);
+        setMarketData(new Map());
+        setCurrentSelectedCoins([]);
+        setFavoriteCoins([]);
+        clearSignals();
+
+        if (systemInitializedRef.current) {
+          systemInitializedRef.current = false;
+          await initializeCentralSystem();
+        }
+
+        addLog(`✅ ${newMarket} 마켓으로 변경 완료`, "success");
+        return true;
+      } catch (error) {
+        addLog(`마켓 변경 실패: ${error.message}`, "error");
+        return false;
+      }
+    },
+    [selectedMarket, isActive, addLog, initializeCentralSystem, clearSignals]
+  );
+
+  // ✅ useEffect들 (중앙 데이터 업데이트 처리, Store 동기화 등)
+  useEffect(() => {
+    if (!handleCentralDataUpdate || !processMarketDataUpdate) return;
+
+    const enhancedHandler = (data) => {
+      if (!mountedRef.current) return null;
+
+      try {
+        const dataMap = handleCentralDataUpdate(data);
+        if (dataMap) {
+          processMarketDataUpdate(dataMap);
+        }
+        return dataMap;
+      } catch (error) {
+        console.warn("중앙 데이터 업데이트 처리 실패:", error);
+        return null;
+      }
     };
   }, [handleCentralDataUpdate, processMarketDataUpdate]);
 
-  // ✅ Store 동기화 로직
   useEffect(() => {
-    if (!isStoreInitialized) return;
+    if (!isStoreInitialized || !mountedRef.current) return;
 
-    const isSame =
-      favoriteCoins.length === storeSelectedCoins.length &&
-      favoriteCoins.every((fc) =>
-        storeSelectedCoins.find((sc) => sc.market === fc.market)
-      );
+    const timeoutId = setTimeout(() => {
+      if (!mountedRef.current) return;
 
-    if (storeSelectedCoins.length > 0 && !isSame) {
-      setFavoriteCoins(
-        storeSelectedCoins.map((coin) => ({ ...coin, isTopCoin: false }))
-      );
-      addLog(`관심코인 동기화됨: ${storeSelectedCoins.length}개`, "info");
-    } else if (storeSelectedCoins.length === 0 && favoriteCoins.length > 0) {
-      setFavoriteCoins([]);
-      addLog("관심코인 목록이 초기화됨", "info");
-    }
-  }, [storeSelectedCoins, favoriteCoins, isStoreInitialized, addLog]);
+      const isSame =
+        favoriteCoins.length === storeSelectedCoins.length &&
+        favoriteCoins.every((fc) =>
+          storeSelectedCoins.find((sc) => sc.market === fc.market)
+        );
+
+      if (storeSelectedCoins.length > 0 && !isSame) {
+        const newFavoriteCoins = storeSelectedCoins.map((coin) => ({
+          ...coin,
+          isTopCoin: false,
+        }));
+        setFavoriteCoins(newFavoriteCoins);
+        addLog(`관심코인 동기화됨: ${storeSelectedCoins.length}개`, "info");
+      } else if (storeSelectedCoins.length === 0 && favoriteCoins.length > 0) {
+        setFavoriteCoins([]);
+        addLog("관심코인 목록이 초기화됨", "info");
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [storeSelectedCoins, favoriteCoins.length, isStoreInitialized, addLog]);
 
   useEffect(() => {
-    if (!isStoreInitialized) return;
+    if (!isStoreInitialized || !mountedRef.current) return;
 
-    if (tradingMode === "favorites") {
-      setCurrentSelectedCoins(favoriteCoins);
-      addLog(`🎯 관심코인 모드로 전환: ${favoriteCoins.length}개`, "info");
-    } else if (tradingMode === "top") {
-      setCurrentSelectedCoins(topCoins);
-      addLog(`🏆 상위코인 모드로 전환: ${topCoins.length}개`, "info");
-    }
+    const timeoutId = setTimeout(() => {
+      if (!mountedRef.current) return;
+
+      if (tradingMode === "favorites") {
+        setCurrentSelectedCoins(favoriteCoins);
+        if (favoriteCoins.length > 0) {
+          addLog(`🎯 관심코인 모드로 전환: ${favoriteCoins.length}개`, "info");
+        }
+      } else if (tradingMode === "top") {
+        setCurrentSelectedCoins(topCoins);
+        if (topCoins.length > 0) {
+          addLog(`🏆 상위코인 모드로 전환: ${topCoins.length}개`, "info");
+        }
+      }
+    }, 200);
+
+    return () => clearTimeout(timeoutId);
   }, [tradingMode, favoriteCoins, topCoins, addLog, isStoreInitialized]);
 
   useEffect(() => {
-    setTradingSettings(getInitialSettings());
-  }, [testMode, getInitialSettings, dynamicPositionEnabled]);
-
-  // ✅ 전역 설정 공유
-  useEffect(() => {
-    const updateGlobalStore = () => {
-      if (typeof window !== "undefined") {
-        window.tradingStore = {
-          getState: () => ({
-            tradingSettings: tradingSettings,
-          }),
-        };
+    const timeoutId = setTimeout(() => {
+      if (mountedRef.current) {
+        setTradingSettings(getInitialSettings());
       }
-    };
-    setTimeout(updateGlobalStore, 0);
-  }, [tradingSettings]);
+    }, 100);
+
+    return () => clearTimeout(timeoutId);
+  }, [testMode, dynamicPositionEnabled, getInitialSettings]);
 
   useEffect(() => {
-    if (tradingMode === "top" && topCoins.length === 0 && isStoreInitialized) {
-      updateTopCoinsUI();
+    if (
+      tradingMode === "top" &&
+      topCoins.length === 0 &&
+      isStoreInitialized &&
+      mountedRef.current
+    ) {
+      const timeoutId = setTimeout(() => {
+        if (mountedRef.current) {
+          updateTopCoinsUI();
+        }
+      }, 1000);
+
+      return () => clearTimeout(timeoutId);
     }
   }, [tradingMode, topCoins.length, updateTopCoinsUI, isStoreInitialized]);
 
-  // ✅ 컴포넌트 마운트 시 초기화
   useEffect(() => {
     const initializeOnMount = async () => {
+      if (!mountedRef.current) return;
+
       if (!isStoreInitialized) {
         await initializeStore();
       }
 
       const currentStoreCoins = useCoinStore.getState().selectedCoins;
-      if (currentStoreCoins.length > 0) {
-        setFavoriteCoins(
-          currentStoreCoins.map((coin) => ({ ...coin, isTopCoin: false }))
-        );
+      if (currentStoreCoins.length > 0 && mountedRef.current) {
+        const formattedCoins = currentStoreCoins.map((coin) => ({
+          ...coin,
+          isTopCoin: false,
+        }));
+        setFavoriteCoins(formattedCoins);
+        setCurrentSelectedCoins(formattedCoins);
         addLog(
           `마운트 시 관심코인 ${currentStoreCoins.length}개 동기화`,
           "info"
         );
       }
+
+      addLog("🚀 CryptoWise 페이퍼 트레이딩 시스템 로드됨", "info");
     };
 
     initializeOnMount();
-  }, [initializeStore, addLog]);
+  }, []);
 
-  // ✅ 개발 모드 상태 모니터링
   useEffect(() => {
-    if (process.env.NODE_ENV === "development") {
-      console.log("🔍 usePaperTrading 상태 동기화:", {
-        storeSelectedCoins: storeSelectedCoins.length,
-        favoriteCoins: favoriteCoins.length,
-        currentSelectedCoins: currentSelectedCoins.length,
-        tradingMode,
-        selectedMarket,
-        signals: signals.length,
-        isStoreInitialized,
-        centralDataReady,
-        signalGeneratorReady,
-        dynamicPositionEnabled,
-        hasOptimizationPlan: !!optimizationPlan,
-        hasPositionAnalysis: !!positionAnalysis,
-        hasRiskAssessment: !!riskAssessment,
-      });
-    }
-  }, [
-    storeSelectedCoins.length,
-    favoriteCoins.length,
-    currentSelectedCoins.length,
-    tradingMode,
-    selectedMarket,
-    signals.length,
-    isStoreInitialized,
-    centralDataReady,
-    signalGeneratorReady,
-    dynamicPositionEnabled,
-    optimizationPlan,
-    positionAnalysis,
-    riskAssessment,
-  ]);
+    mountedRef.current = true;
+    cleanupRef.current = false;
 
-  // ✅ Cleanup 로직
-  useEffect(() => {
     return () => {
       console.log("🧹 컴포넌트 언마운트 - 리소스 정리");
+      mountedRef.current = false;
       isActiveRef.current = false;
       cleanupAllResources();
     };
@@ -1342,7 +1512,7 @@ export const usePaperTrading = (
 
   // ✅ 완전한 반환 객체
   return {
-    // 기존 상태
+    // 핵심 상태
     isActive,
     isConnected: connectionStatus === "connected",
     connectionStatus,
@@ -1355,7 +1525,7 @@ export const usePaperTrading = (
     marketSentiment,
     sentimentLoading,
 
-    // 기존 모드별 상태
+    // 코인 관련 상태
     favoriteCoins,
     topCoins,
     currentSelectedCoins,
@@ -1365,10 +1535,10 @@ export const usePaperTrading = (
     selectedMarket,
     availableMarkets,
 
-    // 중앙 시스템 상태
+    // 시스템 상태
     centralDataReady,
     signalGeneratorReady,
-    systemReady: centralDataReady && signalGeneratorReady,
+    systemReady,
 
     // 동적 포지션 관리 상태
     dynamicPositionEnabled,
@@ -1377,7 +1547,7 @@ export const usePaperTrading = (
     riskAssessment,
     cashOptimization,
 
-    // 기존 설정
+    // 설정
     tradingMode,
     setTradingMode,
     topCoinsLimit,
@@ -1388,7 +1558,10 @@ export const usePaperTrading = (
     operationMode,
     setOperationMode,
 
-    // ✅ 모든 액션 함수들 (완전 구현)
+    autoStopDisabled,
+    setAutoStopDisabled,
+
+    // 핵심 액션 함수들
     updatePortfolio,
     startPaperTrading,
     stopPaperTrading,
@@ -1435,7 +1608,7 @@ export const usePaperTrading = (
       positionManagement: dynamicPositionEnabled ? "DYNAMIC" : "FIXED",
       selectedMarket: selectedMarket,
       marketService: upbitMarketService.getServiceStats?.() || {},
-      webSocketService: upbitWebSocketService.getStats(),
+      webSocketService: upbitWebSocketService.getStats?.() || {},
       tradingEngine: paperTradingEngine.getCurrentSettings?.() || {},
       centralSystem: {
         dataReady: centralDataReady,

@@ -575,6 +575,43 @@ class UpbitMarketService {
       };
     }
   }
+
+  // 🎯 NEW: CentralDataManager 전용 메서드 (기존 getTickerData와 별개)
+  async getTickerDataForCentralManager(markets) {
+    try {
+      if (!Array.isArray(markets)) {
+        throw new Error("markets는 배열이어야 합니다");
+      }
+
+      const marketsString = markets.join(",");
+      this.log(
+        `📊 중앙매니저용 티커 데이터 조회: ${markets.length}개`,
+        "debug"
+      );
+
+      const response = await this.apiCall(
+        `https://api.upbit.com/v1/ticker?markets=${encodeURIComponent(marketsString)}`
+      );
+
+      if (response && Array.isArray(response)) {
+        this.log(`✅ 중앙매니저용 티커 데이터 조회 성공: ${response.length}개`);
+        return response;
+      }
+
+      return [];
+    } catch (error) {
+      this.log(
+        `❌ 중앙매니저용 티커 데이터 조회 실패: ${error.message}`,
+        "error"
+      );
+      return [];
+    }
+  }
+
+  // 🎯 NEW: 심볼 배열을 마켓 코드로 변환하는 헬퍼 메서드
+  symbolsToMarkets(symbols) {
+    return symbols.map((symbol) => `${this.getMarketPrefix()}${symbol}`);
+  }
 }
 
 // ✅ 기존 싱글톤 및 익스포트 유지

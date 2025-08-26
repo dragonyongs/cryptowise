@@ -1,29 +1,19 @@
-// src/features/trading/PaperTrading.jsx - 에러 수정 완전 버전
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+// src/features/trading/PaperTrading.jsx - 수정된 버전
+
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   PlayIcon, PauseIcon, CogIcon, BellIcon, TrendingUpIcon, TrendingDownIcon,
-  PieChartIcon, ShieldCheckIcon, BarChart3Icon, InfoIcon, CheckCircleIcon,
-  AlertTriangleIcon, DollarSignIcon, PercentIcon, ZapIcon, ClockIcon,
-  ActivityIcon, Coins, LineChart, Settings, History, Target, AlertCircle,
-  RefreshCw, Eye, EyeOff, Filter, Search, Download, Upload, Trash2, Edit3
+  PieChartIcon, BarChart3Icon, InfoIcon, ActivityIcon, Coins, History
 } from "lucide-react";
 
-// ✅ 중앙화된 스토어들
-import { useCoinStore } from "../../stores/coinStore";
-import { usePortfolioStore } from "../../stores/portfolioStore";
-import { useTradingStore } from "../../stores/tradingStore";
+// ✅ 핵심: usePaperTrading 훅 사용 (실제 거래 로직)
+import { usePaperTrading } from "./hooks/usePaperTrading.js";
 
-// ✅ 중앙화된 데이터 관리자 (서비스)
-import { centralDataManager } from "../../services/data/centralDataManager";
-
-// ✅ 중앙화된 데이터 스토어 (상태) - 올바른 위치
-import { useCentralDataStore } from "../../stores/centralDataStore";
-
-// ✅ 훅들
+// ✅ 보조 훅들
 import { useTradingLogger } from "./hooks/useTradingLogger";
 import { useTradingSettings } from "./hooks/useTradingSettings";
 
-// ✅ 탭 컴포넌트들
+// ✅ 컴포넌트들
 import TradingSettings from "./components/TradingSettings";
 import OverviewTab from "./components/OverviewTab";
 import CoinsTab from "./components/CoinsTab";
@@ -37,609 +27,510 @@ const PaperTrading = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [showSettings, setShowSettings] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
-  const [isActive, setIsActive] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [searchTerm, setSearchTerm] = useState('');
+  const userId = "demo-user";
 
-  // ✅ 중앙화된 스토어에서 실제 데이터 가져오기 (안전한 접근)
+  // 🔥 핵심: 실제 거래 로직을 포함한 usePaperTrading 훅 사용
   const {
-    selectedCoins = [], // 기본값 제공
-    isLoading: coinsLoading = false,
-    initializeData: initializeCoins,
-    addCoin,
-    removeCoin,
-    getLoadingState
-  } = useCoinStore() || {}; // useCoinStore 자체가 undefined일 경우 대비
+    // 상태
+    isActive,
+    isConnected,
+    connectionStatus,
+    lastSignal,
+    logs,
+    signals,
+    marketData,
+    marketCondition,
+    monitoringStats,
+    marketSentiment,
 
-  const {
-    portfolioData = null, // 기본값 제공
-    portfolioStats = null,
+    // 코인 관련
+    favoriteCoins,
+    topCoins,
+    currentSelectedCoins,
+    selectedCoins,
+
+    // 시스템 상태
+    centralDataReady,
+    signalGeneratorReady,
+    systemReady, // 🔥 usePaperTrading에서 계산된 값 사용
+
+    // 동적 포지션 관리
+    dynamicPositionEnabled,
+    optimizationPlan,
+    positionAnalysis,
+    riskAssessment,
+    cashOptimization,
+
+    // 설정
+    tradingMode,
+    setTradingMode,
+    topCoinsLimit,
+    setTopCoinsLimit,
+    tradingSettings,
+    setTradingSettings,
+    testMode,
+
+    // 🔥 핵심 액션들 (실제 거래 기능)
     updatePortfolio,
-    initializeConfig
-  } = usePortfolioStore() || {};
-
-  const {
-    tradingSettings = {},
-    updateTradingSettings
-  } = useTradingStore() || {};
-
-  // ✅ 중앙 데이터 스토어에서 실시간 데이터 (안전한 접근)
-  const {
-    trades = [], // 기본값 제공
-    signals = [],
-    notifications = [],
-    addTrade,
-    addSignal,
-    addNotification,
-    clearAllData
-  } = useCentralDataStore() || {};
-
-  // ✅ 로거 시스템 (안전한 접근)
-  const {
-    logs = [], // 기본값 제공
+    startPaperTrading,
+    stopPaperTrading,
     addLog,
-    updateStats,
-    resetStats,
-    monitoringStats = {},
-    exportLogs,
-    getFilteredLogs
-  } = useTradingLogger() || {};
+    toggleTestMode,
+    refreshMarketCondition,
+    fetchMarketSentiment,
+    updateTopCoinsUI,
 
-  // ✅ 설정 관리 (안전한 접근)
+    // 동적 포지션 관리
+    toggleDynamicPositionManagement,
+    generateOptimizationPlan,
+    executeOptimizationPlan,
+    updatePositionAnalysis,
+    updateRiskAssessment,
+    updateCashOptimization,
+
+    // 코인 관리
+    addFavoriteCoin,
+    removeFavoriteCoin,
+
+    // 유틸리티
+    selectedCoinsCount,
+    hasSelectedCoins,
+    tradingStats,
+  } = usePaperTrading(userId, null);
+
+  // ✅ 보조 훅들
   const {
     settings = {},
     isDirty = false,
     saveSettings
-  } = useTradingSettings() || {};
+  } = useTradingSettings();
 
   // ✅ 초기화
   useEffect(() => {
-    const initializeApp = async () => {
-      try {
-        addLog?.("🚀 CryptoWise 페이퍼 트레이딩 초기화 시작", "info");
+    addLog?.("🚀 CryptoWise 페이퍼 트레이딩 시스템 로드됨", "info");
+  }, [addLog]);
 
-        // 1. 포트폴리오 설정 초기화
-        if (initializeConfig) {
-          await initializeConfig("demo-user");
-          addLog?.("✅ 포트폴리오 설정 초기화 완료", "success");
-        }
+  // 🔥 시스템 준비 상태 체크 (수정됨)
+  const isSystemReady = useMemo(() => {
+    // 🔥 더 관대한 조건: 관심코인만 있으면 시작 가능
+    const hasCoins = hasSelectedCoins || favoriteCoins.length > 0;
+    const basicReady = centralDataReady || signalGeneratorReady; // OR 조건으로 완화
 
-        // 2. 코인 데이터 초기화 (로컬스토리지 확인)
-        const savedCoins = localStorage.getItem('cryptowise_selected_coins');
-        if (savedCoins && initializeCoins && addCoin) {
-          try {
-            const parsedCoins = JSON.parse(savedCoins);
-            for (const coinMarket of parsedCoins) {
-              const result = addCoin(coinMarket);
-              if (result?.success) {
-                addLog?.(`📈 관심코인 복원: ${coinMarket}`, "success");
-              }
-            }
-            addLog?.(`📦 로컬스토리지에서 ${parsedCoins.length}개 관심코인 복원`, "success");
-          } catch (error) {
-            addLog?.("❌ 로컬스토리지 관심코인 복원 실패 - 새로 초기화", "warning");
-            if (initializeCoins) {
-              await initializeCoins(true);
-            }
-          }
-        } else if (initializeCoins) {
-          await initializeCoins();
-          addLog?.("🔄 코인 데이터 새로 초기화", "info");
-        }
+    console.log('🔍 시스템 상태 체크:', {
+      hasCoins,
+      centralDataReady,
+      signalGeneratorReady,
+      systemReady,
+      basicReady,
+      finalReady: hasCoins && (systemReady || basicReady)
+    });
 
-        // 3. 중앙 데이터 매니저 초기화
-        if (selectedCoins?.length > 0 && centralDataManager) {
-          const coinSymbols = selectedCoins.map(coin => coin.symbol || coin.market?.replace('KRW-', ''));
-          await centralDataManager.initialize(coinSymbols);
-          addLog?.(`🎯 중앙 데이터 매니저 초기화: ${coinSymbols.length}개 코인`, "success");
-        }
+    return hasCoins && (systemReady || basicReady);
+  }, [hasSelectedCoins, favoriteCoins.length, centralDataReady, signalGeneratorReady, systemReady]);
 
-        // 4. 거래 내역 복원
-        const savedTrades = localStorage.getItem('cryptowise_trades');
-        if (savedTrades && addTrade) {
-          try {
-            const parsedTrades = JSON.parse(savedTrades);
-            parsedTrades.forEach(trade => addTrade(trade));
-            addLog?.(`📊 거래내역 ${parsedTrades.length}개 복원`, "success");
-          } catch (error) {
-            addLog?.("❌ 거래내역 복원 실패", "warning");
-          }
-        }
-
-        // 5. 신호 내역 복원
-        const savedSignals = localStorage.getItem('cryptowise_signals');
-        if (savedSignals && addSignal) {
-          try {
-            const parsedSignals = JSON.parse(savedSignals);
-            parsedSignals.forEach(signal => addSignal(signal));
-            addLog?.(`🔔 신호내역 ${parsedSignals.length}개 복원`, "success");
-          } catch (error) {
-            addLog?.("❌ 신호내역 복원 실패", "warning");
-          }
-        }
-
-        addLog?.("✅ 시스템 초기화 완료 - 페이퍼 트레이딩 준비됨", "success");
-      } catch (error) {
-        addLog?.(`❌ 시스템 초기화 실패: ${error.message}`, "error");
-      }
-    };
-
-    initializeApp();
-  }, []);
-
-  // ✅ 관심코인 변경 시 로컬스토리지 저장
-  useEffect(() => {
-    if (selectedCoins?.length > 0) {
-      const coinMarkets = selectedCoins.map(coin => coin.market || `KRW-${coin.symbol}`);
-      localStorage.setItem('cryptowise_selected_coins', JSON.stringify(coinMarkets));
-      addLog?.(`💾 관심코인 ${selectedCoins.length}개 자동 저장`, "debug");
-    }
-  }, [selectedCoins, addLog]);
-
-  // ✅ 거래 내역 변경 시 로컬스토리지 저장
-  useEffect(() => {
-    if (trades?.length > 0) {
-      localStorage.setItem('cryptowise_trades', JSON.stringify(trades));
-      addLog?.(`💾 거래내역 ${trades.length}개 자동 저장`, "debug");
-    }
-  }, [trades, addLog]);
-
-  // ✅ 신호 내역 변경 시 로컬스토리지 저장
-  useEffect(() => {
-    if (signals?.length > 0) {
-      localStorage.setItem('cryptowise_signals', JSON.stringify(signals));
-      addLog?.(`💾 신호내역 ${signals.length}개 자동 저장`, "debug");
-    }
-  }, [signals, addLog]);
-
-  // ✅ 거래 시작/중지 핸들러 (완전 구현)
+  // ✅ 거래 시작/중지 핸들러 (조건 완화)
   const handleToggleTrading = useCallback(async () => {
     if (!isActive) {
-      // 거래 시작 전 검증
-      if (!selectedCoins?.length) {
-        addNotification?.({
-          message: '관심코인을 먼저 선택해주세요',
-          type: 'warning'
-        });
+      // 🔥 시작 전 검증 (조건 완화)
+      if (!hasSelectedCoins && favoriteCoins.length === 0) {
+        addLog?.("❌ 관심코인을 먼저 선택해주세요", "warning");
         setActiveTab('coins');
         return;
       }
 
-      if (isDirty && saveSettings) {
-        const shouldSave = window.confirm('저장되지 않은 설정이 있습니다. 저장하고 거래를 시작하시겠습니까?');
-        if (shouldSave) {
-          const result = await saveSettings();
-          if (!result?.success) {
-            addLog?.(`❌ 설정 저장 실패: ${result?.error}`, 'error');
-            addNotification?.({
-              message: `설정 저장 실패: ${result?.error}`,
-              type: 'error'
-            });
-            return;
-          }
-        }
+      // 🔥 시스템 준비 상태 체크 (더 관대하게)
+      if (!isSystemReady && !hasSelectedCoins) {
+        addLog?.("⏳ 시스템이 준비되지 않았습니다. 잠시만 기다려주세요...", "warning");
+        return;
       }
 
-      try {
-        setIsActive(true);
-        setConnectionStatus('connecting');
-        addLog?.("🚀 페이퍼 트레이딩 시작", "info");
-
-        // 중앙 데이터 매니저 구독 시작
-        const coinSymbols = selectedCoins.map(coin => coin.symbol || coin.market?.replace('KRW-', ''));
-        const unsubscribe = centralDataManager?.subscribe('paperTrading', (data) => {
-          // 실시간 데이터 처리
-          if (data.prices) {
-            updateStats?.(prev => ({
-              ...prev,
-              dataReceived: (prev.dataReceived || 0) + Object.keys(data.prices).length,
-              lastActivity: new Date().toLocaleTimeString()
-            }));
-          }
-        });
-
-        // 포트폴리오 업데이트 스케줄러 시작
-        const portfolioInterval = setInterval(() => {
-          if (isActive && updatePortfolio && portfolioData) {
-            updatePortfolio(portfolioData, portfolioData?.totalValue);
-            addLog?.("📊 포트폴리오 자동 업데이트", "debug");
-          }
-        }, 30000); // 30초마다
-
-        setConnectionStatus('connected');
-        addLog?.(`✅ 페이퍼 트레이딩 시작 완료 - ${coinSymbols.length}개 코인 모니터링`, "success");
-        addNotification?.({
-          message: `페이퍼 트레이딩이 시작되었습니다 (${coinSymbols.length}개 코인)`,
-          type: 'success'
-        });
-
-        // 정리 함수 저장 (컴포넌트 언마운트나 중지 시 사용)
-        window.tradingCleanup = () => {
-          unsubscribe?.();
-          clearInterval(portfolioInterval);
-        };
-
-      } catch (error) {
-        addLog?.(`❌ 거래 시작 실패: ${error.message}`, "error");
-        addNotification?.({
-          message: `거래 시작 실패: ${error.message}`,
-          type: 'error'
-        });
-        setIsActive(false);
-        setConnectionStatus('disconnected');
-      }
+      // 🔥 실제 거래 시작
+      addLog?.("🔥 페이퍼 트레이딩 시작 요청", "info");
+      await startPaperTrading();
     } else {
-      // 거래 중지
-      try {
-        setIsActive(false);
-        setConnectionStatus('disconnecting');
-        addLog?.("🛑 페이퍼 트레이딩 중지 요청", "info");
-
-        // 정리 작업 실행
-        if (window.tradingCleanup) {
-          window.tradingCleanup();
-          delete window.tradingCleanup;
-        }
-
-        setConnectionStatus('disconnected');
-        addLog?.("✅ 페이퍼 트레이딩 완전 중지", "warning");
-        addNotification?.({
-          message: '페이퍼 트레이딩이 중지되었습니다',
-          type: 'info'
-        });
-      } catch (error) {
-        addLog?.(`❌ 거래 중지 중 오류: ${error.message}`, "error");
-      }
+      // 🔥 실제 거래 중지
+      addLog?.("🛑 페이퍼 트레이딩 중지 요청", "info");
+      stopPaperTrading();
     }
-  }, [isActive, selectedCoins, isDirty, saveSettings, addLog, addNotification, portfolioData, updatePortfolio, updateStats]);
+  }, [isActive, hasSelectedCoins, favoriteCoins.length, isSystemReady, startPaperTrading, stopPaperTrading, addLog]);
 
-  // ✅ 코인 토글 핸들러 (완전 구현)
-  const handleCoinToggle = useCallback((symbol, isSelected) => {
-    if (!addCoin || !removeCoin || !addLog || !addNotification) return;
-
-    const coinMarket = `KRW-${symbol}`;
-
-    if (isSelected) {
-      const result = addCoin(coinMarket);
-      addLog(`${result?.success ? '✅' : '❌'} ${symbol} ${result?.message}`, result?.success ? 'success' : 'warning');
-      addNotification({
-        message: `${symbol}: ${result?.message}`,
-        type: result?.success ? 'success' : 'warning'
-      });
-    } else {
-      const result = removeCoin(coinMarket);
-      addLog(`${result?.success ? '✅' : '❌'} ${symbol} ${result?.message}`, result?.success ? 'info' : 'warning');
-      addNotification({
-        message: `${symbol}: ${result?.message}`,
-        type: result?.success ? 'info' : 'warning'
-      });
+  // ✅ 신호 새로고침
+  const handleRefreshSignals = useCallback(async () => {
+    if (!isActive) {
+      addLog?.("❌ 거래가 활성화되지 않았습니다", "warning");
+      return;
     }
-  }, [addCoin, removeCoin, addLog, addNotification]);
 
-  // ✅ 신호 새로고침 로직 (완전 구현)
-  const handleRefreshSignals = useCallback(() => {
-    if (!addLog || !addSignal || !updateStats) return;
+    addLog?.("🔄 신호 새로고침 시작", "info");
+    await refreshMarketCondition();
+    await updatePortfolio(true);
+    addLog?.("✅ 신호 새로고침 완료", "success");
+  }, [isActive, refreshMarketCondition, updatePortfolio, addLog]);
 
-    addLog("🔄 신호 새로고침 요청", "info");
-
-    // 실제 신호 새로고침 로직
-    try {
-      const refreshedSignals = (selectedCoins || []).map(coin => {
-        const mockSignal = {
-          id: `signal_${coin.symbol}_${Date.now()}`,
-          symbol: coin.symbol,
-          type: Math.random() > 0.5 ? 'BUY' : 'SELL',
-          totalScore: Math.random() * 10,
-          confidence: Math.random() > 0.7 ? 'HIGH' : Math.random() > 0.4 ? 'MEDIUM' : 'LOW',
-          reason: '기술적 분석 기반 신호',
-          timestamp: new Date(),
-          executed: false,
-          price: coin.currentPrice || Math.random() * 1000000
-        };
-        addSignal(mockSignal);
-        return mockSignal;
-      });
-
-      addLog(`✅ 신호 ${refreshedSignals.length}개 새로고침 완료`, "success");
-      updateStats(prev => ({
-        ...prev,
-        signalsGenerated: (prev.signalsGenerated || 0) + refreshedSignals.length
-      }));
-    } catch (error) {
-      addLog(`❌ 신호 새로고침 실패: ${error.message}`, "error");
-    }
-  }, [selectedCoins, addSignal, addLog, updateStats]);
-
-  // ✅ 로그 검색 로직 (완전 구현)
-  const handleSearchLogs = useCallback((searchTerm) => {
-    if (!getFilteredLogs || !addLog) return [];
-
-    setSearchTerm(searchTerm);
-    addLog(`🔍 로그 검색: "${searchTerm}"`, "debug");
-
-    // 검색 결과 반환
-    return getFilteredLogs(null, searchTerm);
-  }, [getFilteredLogs, addLog]);
-
-  // ✅ 탭별 카운트 계산 (에러 수정 - 안전한 접근)
-  const tabCounts = useMemo(() => ({
-    coins: selectedCoins?.length ?? 0,
-    portfolio: portfolioData?.coins?.length ?? 0,
-    trades: trades?.length ?? 0,
-    signals: signals?.length ?? 0,
-    logs: logs?.length ?? 0
-  }), [selectedCoins, portfolioData, trades, signals, logs]);
-
-  // ✅ 성과 데이터 계산 (안전한 접근)
+  // ✅ 성과 데이터
   const performance = useMemo(() => {
-    const totalTrades = trades?.length ?? 0;
-    const profitableTrades = trades?.filter(t => (t.profitRate || 0) > 0).length ?? 0;
-    const winRate = totalTrades > 0 ? (profitableTrades / totalTrades) * 100 : 0;
-
+    const portfolio = tradingStats?.tradingEngine || {};
     return {
-      totalTrades,
-      profitableTrades,
-      winRate
+      totalValue: portfolio.totalValue || 0,
+      totalProfit: portfolio.totalProfit || 0,
+      profitPercent: portfolio.totalProfitRate || 0,
+      winRate: portfolio.performance?.winRate || 0,
+      totalTrades: portfolio.tradingStats?.totalTrades || 0,
+      connectionStatus: isConnected ? 'connected' : 'disconnected'
     };
-  }, [trades]);
+  }, [tradingStats, isConnected]);
 
-  // ✅ 탭 구성 (실제 데이터 반영)
-  const tabs = [
-    { id: 'dashboard', label: '대시보드', icon: BarChart3Icon, count: null },
-    { id: 'coins', label: '코인 관리', icon: Coins, count: tabCounts.coins },
-    { id: 'portfolio', label: '포트폴리오', icon: PieChartIcon, count: tabCounts.portfolio },
-    { id: 'trades', label: '거래내역', icon: History, count: tabCounts.trades },
-    { id: 'signals', label: '신호', icon: ActivityIcon, count: tabCounts.signals },
-    { id: 'logs', label: '로그', icon: InfoIcon, count: tabCounts.logs }
-  ];
+  // ✅ 탭별 카운트
+  const tabCounts = useMemo(() => ({
+    coins: selectedCoinsCount || 0,
+    portfolio: currentSelectedCoins?.length || 0,
+    trades: tradingStats?.tradingEngine?.tradingStats?.totalTrades || 0,
+    signals: signals?.length || 0,
+    logs: logs?.length || 0
+  }), [selectedCoinsCount, currentSelectedCoins, tradingStats, signals, logs]);
 
-  // ✅ 탭별 렌더링 (완전 구현)
+  // ✅ 탭 렌더링 (기존과 동일)
   const renderTabContent = () => {
     switch (activeTab) {
       case 'dashboard':
         return (
           <OverviewTab
+            signals={signals?.filter(s => !s.executed) || []}
+            portfolioData={{
+              totalValue: performance.totalValue,
+              coins: currentSelectedCoins || [],
+              totalProfit: performance.totalProfit,
+              profitPercent: performance.profitPercent,
+              isPositive: performance.profitPercent > 0
+            }}
+            systemHealth={connectionStatus}
+            connectionStatus={performance.connectionStatus}
             isActive={isActive}
-            connectionStatus={connectionStatus}
-            performance={performance}
-            lastSignal={signals?.[0] || null}
+            marketCondition={marketCondition}
+            tradingMode={tradingMode}
+            testMode={testMode}
+            dynamicPositionEnabled={dynamicPositionEnabled}
+            systemReady={isSystemReady}
           />
         );
+
       case 'coins':
         return (
           <CoinsTab
-            coins={[]} // 전체 이용 가능한 코인 목록 (필요시 추가)
-            selectedCoins={selectedCoins || []} // ✅ 선택된 코인들 전달
-            onCoinToggle={handleCoinToggle}
-            onCoinAdd={(symbol) => {
-              // 새 코인 추가 로직
-              const result = addCoin(`KRW-${symbol}`);
-              if (result?.success) {
-                addLog?.(`✅ ${symbol} 코인 추가됨`, "success");
+            favoriteCoins={favoriteCoins}
+            topCoins={topCoins}
+            onToggleFavorite={(symbol, isSelected) => {
+              if (isSelected) {
+                const coin = topCoins?.find(c => c.symbol === symbol);
+                if (coin) {
+                  addFavoriteCoin(coin);
+                }
               } else {
-                addLog?.(`❌ ${symbol} 추가 실패: ${result?.message}`, "error");
+                removeFavoriteCoin(`KRW-${symbol}`);
               }
             }}
-            onRefresh={() => {
-              // 코인 데이터 새로고침
-              if (initializeCoins) {
-                initializeCoins(true);
-                addLog?.("🔄 코인 데이터 새로고침", "info");
+            onAddCoin={(symbol) => {
+              const coin = topCoins?.find(c => c.symbol === symbol);
+              if (coin) {
+                addFavoriteCoin(coin);
               }
             }}
+            onRefresh={updateTopCoinsUI}
             isActive={isActive}
             loadingState={{
-              isLoading: coinsLoading || false,
-              hasData: (selectedCoins?.length || 0) > 0
+              isLoading: !systemReady,
+              hasData: hasSelectedCoins
             }}
+            tradingMode={tradingMode}
+            onTradingModeChange={setTradingMode}
           />
         );
+
       case 'portfolio':
         return (
           <PortfolioTab
-            portfolio={portfolioData}
-            totalValue={portfolioData?.totalValue}
+            coins={currentSelectedCoins?.map(coin => ({
+              ...coin,
+              value: coin.currentPrice * (coin.quantity || 1),
+              profitPercent: coin.profitRate || 0
+            })) || []}
+            portfolioData={{
+              totalProfit: performance.totalProfit,
+              profitPercent: performance.profitPercent,
+              cashValue: tradingStats?.tradingEngine?.krw || 0
+            }}
+            onRefresh={() => updatePortfolio(true)}
+            isActive={isActive}
+            dynamicPositionEnabled={dynamicPositionEnabled}
+            optimizationPlan={optimizationPlan}
+            positionAnalysis={positionAnalysis}
+            riskAssessment={riskAssessment}
+            onGenerateOptimizationPlan={generateOptimizationPlan}
+            onExecuteOptimizationPlan={executeOptimizationPlan}
           />
         );
+
       case 'trades':
         return (
           <TradesTab
-            trades={trades || []}
+            trades={tradingStats?.tradingEngine?.trades || []}
+            onExport={() => {
+              const trades = tradingStats?.tradingEngine?.trades || [];
+              const csvContent = "data:text/csv;charset=utf-8,"
+                + "Date,Symbol,Type,Price,Quantity,Profit\n"
+                + trades.map(t => `${t.timestamp},${t.symbol},${t.action},${t.price},${t.quantity},${t.profitRate || 0}`).join("\n");
+              const link = document.createElement("a");
+              link.setAttribute("href", encodeURI(csvContent));
+              link.setAttribute("download", `trades_${new Date().toISOString().split('T')[0]}.csv`);
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+              addLog?.("📄 거래내역 내보내기 완료", "info");
+            }}
+            performance={performance}
+            isActive={isActive}
           />
         );
+
       case 'signals':
         return (
           <SignalsTab
             signals={signals || []}
+            onExecuteSignal={(signal) => {
+              addLog?.(`🔥 수동 신호 실행: ${signal.symbol} ${signal.type}`, "info");
+            }}
             isActive={isActive}
-            tradingMode="paper"
-            lastUpdateTime={monitoringStats?.lastActivity}
-            onRefreshSignals={handleRefreshSignals}
+            marketCondition={marketCondition}
+            testMode={testMode}
           />
         );
+
       case 'logs':
         return (
           <LogsTab
             logs={logs || []}
-            onSearchChange={handleSearchLogs}
+            onExport={() => {
+              const logData = logs?.map(log => ({
+                timestamp: log.timestamp,
+                level: log.level,
+                message: log.message
+              })) || [];
+              const jsonContent = "data:text/json;charset=utf-8," + JSON.stringify(logData, null, 2);
+              const link = document.createElement("a");
+              link.setAttribute("href", encodeURI(jsonContent));
+              link.setAttribute("download", `logs_${new Date().toISOString().split('T')[0]}.json`);
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+              addLog?.("📄 로그 내보내기 완료", "info");
+            }}
+            stats={monitoringStats}
+            systemStats={tradingStats}
           />
         );
+
       default:
-        return (
-          <div className="text-center py-8">
-            <p className="text-gray-500 dark:text-gray-400">
-              {activeTab} 탭 내용을 준비 중입니다...
-            </p>
-          </div>
-        );
+        return <div className="p-4">준비 중입니다...</div>;
     }
   };
 
   return (
-    <div className="max-w-7xl mx-auto p-6 bg-gray-50 dark:bg-gray-900 min-h-screen">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       {/* 헤더 */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-            페이퍼 트레이딩
-          </h1>
-          <p className="text-gray-600 dark:text-gray-400 mt-1">
-            실제 자금 없이 안전하게 거래 연습 • 중앙화된 데이터 시스템
-          </p>
-        </div>
+      <div className="bg-white dark:bg-gray-800 shadow">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center py-6">
+            <div className="flex items-center">
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                페이퍼 트레이딩
+              </h1>
+              <div className="ml-4 flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
+                <span>실제 자금 없이 안전하게 거래 연습</span>
+                <span>•</span>
+                <span className={`${isSystemReady ? 'text-green-600' : 'text-yellow-600'}`}>
+                  {isSystemReady ? '시스템 준비됨' : '시스템 준비중'}
+                </span>
+                {isActive && (
+                  <>
+                    <span>•</span>
+                    <span className="text-green-600">거래 활성화됨</span>
+                  </>
+                )}
+              </div>
+            </div>
 
-        {/* 알림 버튼 */}
-        <div className="flex items-center space-x-4">
-          <button
-            onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-            className="relative p-2 text-gray-400 hover:text-gray-500 dark:hover:text-gray-300"
-          >
-            <BellIcon className="h-6 w-6" />
-            {(notifications?.length ?? 0) > 0 && (
-              <span className="absolute -top-1 -right-1 h-4 w-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
-                {notifications.length}
-              </span>
-            )}
-          </button>
+            {/* 시스템 상태 표시 */}
+            <div className="flex items-center space-x-4 text-sm">
+              <div className="flex items-center space-x-2">
+                <span>연결: {connectionStatus}</span>
+                <span>신호: {signals?.length || 0}개</span>
+                <span>코인: {selectedCoinsCount || 0}개</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* 알림 드롭다운 */}
-      {isNotificationOpen && (
-        <div className="fixed top-16 right-6 w-80 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50">
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-            <h3 className="font-medium text-gray-900 dark:text-white">
-              새로운 알림이 {(notifications?.length ?? 0) === 0 ? '없습니다' : `${notifications.length}개 있습니다`}
-            </h3>
-          </div>
-          <div className="max-h-64 overflow-y-auto">
-            {(notifications?.length ?? 0) === 0 ? (
-              <div className="p-4 text-center text-gray-500 dark:text-gray-400">
-                알림이 없습니다.
-              </div>
-            ) : (
-              notifications?.map(notification => (
-                <div key={notification.id} className="p-3 border-b border-gray-100 dark:border-gray-700 last:border-b-0">
-                  <div className="text-sm text-gray-900 dark:text-white">
-                    {notification.message}
-                  </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {notification.timestamp?.toLocaleTimeString?.()}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
-      <div className="grid grid-cols-4 gap-6">
-        {/* 좌측: 메인 콘텐츠 (3칸) */}
-        <div className="col-span-3">
+      {/* 메인 콘텐츠 (3칸) */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
           {/* 탭 네비게이션 */}
-          <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
-            <nav className="-mb-px flex space-x-8">
-              {tabs.map((tab) => {
-                const Icon = tab.icon;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`${activeTab === tab.id
-                      ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                      : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300'
-                      } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2`}
-                  >
-                    <Icon className="h-5 w-5" />
-                    <span>{tab.label}</span>
-                    {tab.count !== null && (
-                      <span className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 py-0.5 px-2 rounded-full text-xs">
-                        {tab.count}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </nav>
-          </div>
-
-          {/* 탭 콘텐츠 */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            {renderTabContent()}
-          </div>
-        </div>
-
-        {/* 우측: 거래 컨트롤 (1칸) */}
-        <div className="space-y-6">
-          {/* 거래 상태 카드 */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
-              실시간 자동 매매 관리
-            </h3>
-
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600 dark:text-gray-400">거래 상태</span>
-                <span className={`text-sm font-medium ${isActive ? 'text-green-600 dark:text-green-400' : 'text-gray-500'
-                  }`}>
-                  {isActive ? "활성" : "비활성"}
-                </span>
+          <div className="lg:col-span-3">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
+              <div className="border-b border-gray-200 dark:border-gray-700">
+                <nav className="-mb-px flex space-x-8 px-6">
+                  {[
+                    { id: 'dashboard', label: '대시보드', icon: BarChart3Icon },
+                    { id: 'coins', label: '코인 관리', icon: Coins, count: tabCounts.coins },
+                    { id: 'portfolio', label: '포트폴리오', icon: PieChartIcon, count: tabCounts.portfolio },
+                    { id: 'trades', label: '거래내역', icon: History, count: tabCounts.trades },
+                    { id: 'signals', label: '신호', icon: ActivityIcon, count: tabCounts.signals },
+                    { id: 'logs', label: '로그', icon: InfoIcon, count: tabCounts.logs }
+                  ].map((tab) => {
+                    const Icon = tab.icon;
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`${activeTab === tab.id
+                          ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                          : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300'
+                          } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2`}
+                      >
+                        <Icon className="h-4 w-4" />
+                        <span>{tab.label}</span>
+                        {tab.count !== undefined && (
+                          <span className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 py-0.5 px-2 rounded-full text-xs">
+                            {tab.count}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </nav>
               </div>
 
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600 dark:text-gray-400">선택 코인</span>
-                <span className="text-sm font-medium text-gray-900 dark:text-white">
-                  {selectedCoins?.length ?? 0}개
-                </span>
+              {/* 탭 콘텐츠 */}
+              <div className="p-6">
+                {renderTabContent()}
               </div>
-
-              <button
-                onClick={handleToggleTrading}
-                disabled={coinsLoading}
-                className={`w-full flex items-center justify-center space-x-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${isActive
-                  ? 'bg-red-600 hover:bg-red-700 text-white'
-                  : 'bg-blue-600 hover:bg-blue-700 text-white'
-                  } disabled:opacity-50 disabled:cursor-not-allowed`}
-              >
-                {isActive ? <PauseIcon className="h-4 w-4" /> : <PlayIcon className="h-4 w-4" />}
-                <span>{isActive ? '거래 중지' : '거래 시작'}</span>
-              </button>
             </div>
           </div>
 
-          {/* 실시간 상태 */}
-          {isActive && (
-            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-              <div className="flex items-center space-x-3">
-                <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse" />
-                <div className="flex-1">
-                  <div className="text-sm font-medium text-blue-900 dark:text-blue-100">
-                    실시간 페이퍼트레이딩 진행 중
+          {/* 사이드바 (1칸) */}
+          <div className="space-y-6">
+            {/* 거래 컨트롤 */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
+                실시간 자동 매매 관리
+              </h3>
+
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-500 dark:text-gray-400">거래 상태</span>
+                  <span className={`text-sm font-medium ${isActive ? 'text-green-600' : 'text-gray-600'}`}>
+                    {isActive ? "활성" : "비활성"}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-500 dark:text-gray-400">선택 코인</span>
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">
+                    {selectedCoinsCount || 0}개
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-500 dark:text-gray-400">시스템</span>
+                  <span className={`text-sm font-medium ${isSystemReady ? 'text-green-600' : 'text-yellow-600'}`}>
+                    {isSystemReady ? "준비됨" : "준비중"}
+                  </span>
+                </div>
+
+                {/* 🔥 버튼 조건 수정 */}
+                <button
+                  onClick={handleToggleTrading}
+                  disabled={!isActive && (!hasSelectedCoins && favoriteCoins.length === 0)}
+                  className={`w-full flex items-center justify-center space-x-2 px-4 py-3 rounded-md font-medium text-white transition-colors ${isActive
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : (hasSelectedCoins || favoriteCoins.length > 0)
+                      ? 'bg-green-600 hover:bg-green-700'
+                      : 'bg-gray-400 cursor-not-allowed'
+                    }`}
+                >
+                  {isActive ? <PauseIcon className="h-4 w-4" /> : <PlayIcon className="h-4 w-4" />}
+                  <span>{isActive ? '거래 중지' : '거래 시작'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 실시간 상태 */}
+            {isActive && (
+              <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+                <div className="flex items-center">
+                  <div className="flex-shrink-0">
+                    <ActivityIcon className="h-5 w-5 text-green-400" />
                   </div>
-                  <div className="text-xs text-blue-700 dark:text-blue-300">
-                    {selectedCoins?.length ?? 0}개 코인 모니터링 • 중앙 데이터 연동
+                  <div className="ml-3">
+                    <h3 className="text-sm font-medium text-green-800 dark:text-green-200">
+                      실시간 페이퍼트레이딩 진행 중
+                    </h3>
+                    <div className="mt-1 text-xs text-green-600 dark:text-green-400">
+                      {selectedCoinsCount || 0}개 코인 모니터링 • {testMode ? '테스트' : '실전'} 모드
+                    </div>
                   </div>
                 </div>
-                <ActivityIcon className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+              </div>
+            )}
+
+            {/* 설정 및 모드 토글 */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
+                설정 및 모드
+              </h3>
+
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-500 dark:text-gray-400">모드</span>
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">
+                    {testMode ? '테스트 모드' : '실전 모드'}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-500 dark:text-gray-400">포지션 관리</span>
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">
+                    {dynamicPositionEnabled ? '동적 관리' : '고정 관리'}
+                  </span>
+                </div>
+
+                <button
+                  onClick={() => setShowSettings(true)}
+                  className="w-full flex items-center justify-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                >
+                  <CogIcon className="h-4 w-4" />
+                  <span>거래 설정</span>
+                </button>
               </div>
             </div>
-          )}
-
-          {/* 설정 버튼 */}
-          <button
-            onClick={() => setShowSettings(true)}
-            className="w-full flex items-center justify-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-          >
-            <CogIcon className="h-4 w-4" />
-            <span>거래 설정</span>
-          </button>
+          </div>
         </div>
       </div>
 
       {/* 설정 모달 */}
       {showSettings && TradingSettings && (
         <TradingSettings
+          isOpen={showSettings}
           onClose={() => setShowSettings(false)}
+          settings={tradingSettings}
+          onSave={(newSettings) => {
+            setTradingSettings(newSettings);
+            setShowSettings(false);
+            addLog?.("⚙️ 거래 설정 저장됨", "success");
+          }}
+          testMode={testMode}
+          dynamicPositionEnabled={dynamicPositionEnabled}
         />
       )}
     </div>
