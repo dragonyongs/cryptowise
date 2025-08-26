@@ -168,22 +168,30 @@ export const usePaperTrading = (
 
   // ✅ 설정 관리
   const getInitialSettings = useCallback(() => {
-    return {
+    console.log(
+      "🔧 getInitialSettings 호출: testMode =",
+      testMode,
+      "dynamicPositionEnabled =",
+      dynamicPositionEnabled
+    );
+
+    const settings = {
       portfolioAllocation: { cash: 0.4, t1: 0.42, t2: 0.15, t3: 0.03 },
+
+      // 🔥 ENHANCED: 매매 조건 구조 (로그 추가)
       tradingConditions: {
         buyConditions: {
-          minBuyScore: testMode ? 5.5 : 7.0,
-          rsiOversold: testMode ? 40 : 30,
-          strongBuyScore: testMode ? 7.5 : 9.0,
-          buyThreshold: testMode ? -1.0 : -2.0,
+          priceDropThreshold: testMode ? -3 : -5, // 가격 하락률 매수
+          rsiOversold: testMode ? 35 : 30, // RSI 과매도
+          minBuyScore: testMode ? 5.5 : 7.0, // 최소 신호 점수
+          volumeThreshold: 1.2, // 거래량 임계값
           requireMultipleSignals: !testMode,
         },
         sellConditions: {
-          profitTarget1: 3,
-          profitTarget2: 5,
-          profitTarget3: 8,
-          stopLoss: -6,
-          sellThreshold: testMode ? 2.0 : 3.0,
+          profitTarget1: 3, // 1차 수익실현
+          profitTarget2: 5, // 2차 수익실현
+          profitTarget3: 8, // 최종 수익목표
+          stopLoss: -6, // 손절매
           rsiOverbought: testMode ? 65 : 70,
           timeBasedExit: 7,
         },
@@ -195,16 +203,54 @@ export const usePaperTrading = (
           volumeThreshold: 1.2,
         },
       },
+
+      // 🔥 ENHANCED: 시장 적응형 거래 규칙 (로그 추가)
+      marketAdaptiveRules: {
+        enabled: true,
+        // 시장 좋을 때 (50점 이상)
+        bullMarket: {
+          rsiOversoldBuy: testMode ? 35 : 30,
+          rsiOverboughtSell: testMode ? 65 : 70,
+          priceDropBuy: testMode ? -2 : -3,
+          priceRiseSell: testMode ? 4 : 6,
+          minBuyScore: testMode ? 4.5 : 6.0,
+        },
+        // 시장 보통일 때 (30-50점)
+        neutralMarket: {
+          rsiOversoldBuy: testMode ? 30 : 25,
+          rsiOverboughtSell: testMode ? 70 : 75,
+          priceDropBuy: testMode ? -3 : -5,
+          priceRiseSell: testMode ? 5 : 8,
+          minBuyScore: testMode ? 5.5 : 7.0,
+        },
+        // 시장 안좋을 때 (30점 미만)
+        bearMarket: {
+          rsiOversoldBuy: testMode ? 25 : 20,
+          rsiOverboughtSell: testMode ? 75 : 80,
+          priceDropBuy: testMode ? -5 : -8,
+          priceRiseSell: testMode ? 6 : 10,
+          minBuyScore: testMode ? 6.5 : 8.0,
+          requireMultipleConfirmation: true, // 추가 확인 필요
+        },
+      },
+
       strategy: testMode ? "test_mode" : "live_mode",
       testMode: testMode,
       dynamicPosition: {
         enabled: dynamicPositionEnabled,
         adaptiveSizing: true,
         cashManagement: true,
-        positionOptimization: true,
-        riskBasedAdjustment: true,
       },
     };
+
+    console.log("📋 생성된 거래 설정:", {
+      buyConditions: settings.tradingConditions.buyConditions,
+      sellConditions: settings.tradingConditions.sellConditions,
+      testMode: settings.testMode,
+      dynamicPosition: settings.dynamicPosition.enabled,
+    });
+
+    return settings;
   }, [testMode, dynamicPositionEnabled]);
 
   const [tradingSettings, setTradingSettings] = useState(() =>
@@ -308,6 +354,7 @@ export const usePaperTrading = (
   }, [cleanupConnection, clearSignals, signalGeneratorReady, addLog]);
 
   // 🔥 시장 조건 업데이트 (수정 버전)
+  // 🔥 updateMarketCondition 수정 (완전 차단 → 조건 조절)
   const updateMarketCondition = useCallback(async () => {
     if (!isActiveRef.current || !mountedRef.current) return null;
 
@@ -327,33 +374,25 @@ export const usePaperTrading = (
           marketConditionsChecked: (prev.marketConditionsChecked || 0) + 1,
         }));
 
-        // 🔥 자동 중지 방지 로직 추가
-        if (condition.overallBuyScore < 50) {
-          if (autoStopDisabled || testModeRef.current) {
-            addLog(
-              `⚠️ 시장 조건이 좋지 않지만 ${testModeRef.current ? "테스트 모드" : "자동 중지 비활성화"}에서는 계속 진행 (${condition.overallBuyScore?.toFixed(1)}점)`,
-              "warning"
-            );
-            // 자동 중지하지 않고 계속 진행
-          } else {
-            addLog("🛑 시장 조건 부적절로 인한 자동 중지", "error");
-            // 자동 중지 로직 (필요시)
-            if (isActiveRef.current) {
-              setTimeout(() => {
-                setIsActive(false);
-                isActiveRef.current = false;
-                cleanupAllResources();
-              }, 1000);
-            }
-            return condition;
-          }
+        // 🔥 NEW: 시장 조건에 따른 거래 조건 조절 (차단 X)
+        let marketAdjustment = "";
+        if (condition.overallBuyScore < 30) {
+          // 매우 안좋음: 조건 강화
+          marketAdjustment = "🔴 매우 주의: 엄격한 조건으로 거래";
+          // 신호 생성 시 더 높은 점수 요구하도록 설정
+          paperTradingEngine.setMarketRiskLevel("HIGH");
+        } else if (condition.overallBuyScore < 50) {
+          // 안좋음: 조건 약간 강화
+          marketAdjustment = "🟡 주의: 신중한 거래 조건 적용";
+          paperTradingEngine.setMarketRiskLevel("MEDIUM");
+        } else {
+          // 보통 이상: 일반 조건
+          marketAdjustment = "🟢 정상: 일반 거래 조건 적용";
+          paperTradingEngine.setMarketRiskLevel("LOW");
         }
 
-        const message = condition.isBuyableMarket
-          ? `시장 분석 완료: ${condition.buyability?.level} (${condition.overallBuyScore?.toFixed(1)}점)`
-          : `시장 조건 주의: ${condition.buyability?.level} (${condition.overallBuyScore?.toFixed(1)}점) - 거래 계속 진행`;
-
-        addLog(message, condition.isBuyableMarket ? "info" : "warning");
+        const message = `시장 분석: ${condition.buyability?.level} (${condition.overallBuyScore?.toFixed(1)}점) - ${marketAdjustment}`;
+        addLog(message, condition.overallBuyScore < 30 ? "warning" : "info");
       }
 
       return condition;
@@ -363,13 +402,7 @@ export const usePaperTrading = (
       }
       return null;
     }
-  }, [
-    addLog,
-    updateStats,
-    dynamicPositionEnabled,
-    autoStopDisabled,
-    cleanupAllResources,
-  ]);
+  }, [addLog, updateStats, dynamicPositionEnabled]);
 
   // 🔥 포지션 분석 업데이트 (먼저 선언)
   const updatePositionAnalysis = useCallback(async () => {
@@ -919,6 +952,15 @@ export const usePaperTrading = (
       if (!mountedRef.current || !isActiveRef.current) return false;
 
       try {
+        // 🔥 ENHANCED: 신호 처리 전 설정 디버깅
+        console.log("🎯 신호 처리 시작:", {
+          symbol: signal.symbol,
+          type: signal.type,
+          score: signal.totalScore,
+          price: signal.price,
+          currentSettings: tradingSettingsRef.current?.tradingConditions,
+        });
+
         const currentMarketData = marketData.get(signal.symbol);
         if (!currentMarketData) {
           addLog(`❌ [${signal.symbol}] 시장 데이터 없음`, "warning");
@@ -931,13 +973,43 @@ export const usePaperTrading = (
           confidence: signal.confidence || "medium",
           price: currentMarketData.trade_price || 0,
           volume24h: currentMarketData.acc_trade_price_24h || 0,
+          // 🔥 ENHANCED: 추가 검증 데이터
+          priceChangePercent:
+            signal.priceChangePercent ||
+            currentMarketData.signed_change_rate * 100,
+          rsi: signal.rsi || signal.technicalData?.rsi,
+          volumeRatio: signal.volumeRatio || signal.technicalData?.volumeRatio,
         };
 
+        // 🔥 ENHANCED: 설정 기반 신호 검증 미리 확인
+        const buyConditions =
+          tradingSettingsRef.current?.tradingConditions?.buyConditions;
+        if (signal.type === "BUY" && buyConditions) {
+          console.log("🔍 매수 조건 사전 검증:", {
+            신호점수: enhancedSignal.totalScore,
+            최소점수: buyConditions.minBuyScore,
+            가격변화: enhancedSignal.priceChangePercent + "%",
+            하락임계값: buyConditions.priceDropThreshold + "%",
+            RSI: enhancedSignal.rsi,
+            RSI임계값: buyConditions.rsiOversold,
+          });
+
+          // 사전 검증으로 불필요한 처리 방지
+          if (enhancedSignal.totalScore < buyConditions.minBuyScore) {
+            addLog(
+              `⚠️ [${signal.symbol}] 사전 검증 실패: 점수 부족 ${enhancedSignal.totalScore} < ${buyConditions.minBuyScore}`,
+              "warning"
+            );
+            return false;
+          }
+        }
+
         addLog(
-          `🔍 [${signal.symbol}] 신호 처리: ${enhancedSignal.totalScore.toFixed(1)}점`,
+          `🔍 [${signal.symbol}] 신호 처리: ${enhancedSignal.totalScore.toFixed(1)}점, 가격변화: ${enhancedSignal.priceChangePercent?.toFixed(2)}%`,
           "info"
         );
 
+        // 동적 포지션 관리 로직 (기존과 동일)
         if (dynamicPositionEnabled && signal.type === "BUY") {
           const portfolioState = {
             totalValue: portfolio?.totalValue || 0,
@@ -977,6 +1049,16 @@ export const usePaperTrading = (
             addLog(`동적 포지션 관리 오류: ${error.message}`, "warning");
           }
         }
+
+        // 🔥 ENHANCED: 페이퍼 트레이딩 엔진에 설정 전달 확인
+        console.log("🔧 엔진으로 전달할 신호:", {
+          symbol: enhancedSignal.symbol,
+          type: enhancedSignal.type,
+          totalScore: enhancedSignal.totalScore,
+          priceChangePercent: enhancedSignal.priceChangePercent,
+          rsi: enhancedSignal.rsi,
+          현재엔진설정: paperTradingEngine.getCurrentSettings?.(),
+        });
 
         const result = await paperTradingEngine.executeSignal(enhancedSignal);
 
@@ -1032,6 +1114,7 @@ export const usePaperTrading = (
     ]
   );
 
+  // 🔥 processMarketDataUpdate 개선 (시장 상황별 차등 조건)
   const processMarketDataUpdate = useCallback(
     async (dataMap) => {
       if (!dataMap || dataMap.size === 0 || !mountedRef.current) return;
@@ -1040,59 +1123,85 @@ export const usePaperTrading = (
 
       if (isActiveRef.current && dataMap.size > 0) {
         try {
-          console.log("🎯 신호 생성 시도 중:", Array.from(dataMap.keys()));
-
-          const newSignals = await generateSignalsFromCachedData(
+          console.log(
+            "🎯 시장 상황별 개별 코인 신호 분석:",
             Array.from(dataMap.keys())
           );
 
-          console.log("🎯 생성된 신호:", newSignals.length, newSignals);
+          // 🔥 시장 상황에 따른 차등 조건 설정
+          let signalOptions = {};
+          const marketScore = marketCondition?.overallBuyScore || 50;
+
+          if (marketScore < 30) {
+            // 시장 매우 안좋음: 엄격한 조건
+            signalOptions = {
+              minBuyScore: testModeRef.current ? 6.5 : 8.0,
+              rsiOversold: testModeRef.current ? 25 : 20, // 더 엄격
+              priceDropThreshold: testModeRef.current ? -5 : -8, // 큰 하락만
+              requireVolumeConfirmation: true,
+              strategy: "market_cautious",
+            };
+            addLog("🔴 시장 매우 주의: 엄격한 개별 코인 조건 적용", "warning");
+          } else if (marketScore < 50) {
+            // 시장 안좋음: 보통 조건
+            signalOptions = {
+              minBuyScore: testModeRef.current ? 5.5 : 7.0,
+              rsiOversold: testModeRef.current ? 30 : 25,
+              priceDropThreshold: testModeRef.current ? -3 : -5,
+              requireVolumeConfirmation: true,
+              strategy: "market_normal",
+            };
+            addLog("🟡 시장 주의: 표준 개별 코인 조건 적용", "info");
+          } else {
+            // 시장 보통 이상: 완화된 조건
+            signalOptions = {
+              minBuyScore: testModeRef.current ? 4.5 : 6.0,
+              rsiOversold: testModeRef.current ? 35 : 30,
+              priceDropThreshold: testModeRef.current ? -2 : -3,
+              requireVolumeConfirmation: false,
+              strategy: "market_favorable",
+            };
+            addLog("🟢 시장 양호: 적극적 개별 코인 조건 적용", "info");
+          }
+
+          // 개별 코인 신호 생성 (시장 조건 무시하지 않고 조건만 조절)
+          const newSignals = await generateSignalsFromCachedData(
+            Array.from(dataMap.keys()),
+            signalOptions
+          );
+
+          console.log(
+            `🎯 생성된 신호 (${signalOptions.strategy}):`,
+            newSignals.length
+          );
 
           if (newSignals.length === 0) {
-            addLog(
-              `⚠️ 신호 생성 결과: 0개 (시장 조건 또는 점수 기준 미달)`,
-              "warning"
+            // 🔥 RSI 기반 백업 신호 (시장 상황 관계없이)
+            addLog("📊 기본 RSI 조건으로 재시도", "info");
+            const rsiSignals = await generateSignalsFromCachedData(
+              Array.from(dataMap.keys()),
+              {
+                useRSIOnly: true,
+                rsiOversold: marketScore < 30 ? 20 : 30, // 시장에 따라 조절
+                rsiOverbought: marketScore < 30 ? 75 : 70,
+                minVolumeRatio: 1.5,
+                strategy: "rsi_backup",
+              }
             );
 
-            // 🔥 테스트 모드에서 강제 신호 생성 시도
-            if (testModeRef.current && autoStopDisabled) {
-              try {
-                addLog("🎯 테스트 모드: 강제 신호 생성 시도", "info");
-
-                const forceSignals = await generateSignalsFromCachedData(
-                  Array.from(dataMap.keys()),
-                  {
-                    minBuyScore: 3.0, // 매우 낮은 기준
-                    strategy: "force_test",
-                    testMode: true,
-                  }
-                );
-
-                if (forceSignals.length > 0) {
-                  addLog(
-                    `🔥 강제 신호 생성: ${forceSignals.length}개`,
-                    "success"
-                  );
-
-                  for (const signal of forceSignals) {
-                    if (!mountedRef.current || !isActiveRef.current) break;
-                    console.log("🔥 강제 신호 처리 중:", signal);
-                    await processSignalForTrading(signal);
-                  }
-                }
-              } catch (forceError) {
-                addLog(`강제 신호 생성 실패: ${forceError.message}`, "warning");
+            if (rsiSignals.length > 0) {
+              addLog(`🔥 RSI 백업 신호: ${rsiSignals.length}개`, "success");
+              for (const signal of rsiSignals) {
+                await processSignalForTrading(signal);
               }
             }
           } else {
             for (const signal of newSignals) {
-              if (!mountedRef.current || !isActiveRef.current) break;
-              console.log("🔥 신호 처리 중:", signal);
               await processSignalForTrading(signal);
             }
           }
         } catch (error) {
-          console.warn("신호 처리 중 오류:", error);
+          console.warn("시장 적응형 신호 처리 오류:", error);
           addLog(`❌ 신호 처리 오류: ${error.message}`, "error");
         }
       }
@@ -1101,7 +1210,7 @@ export const usePaperTrading = (
       generateSignalsFromCachedData,
       processSignalForTrading,
       addLog,
-      autoStopDisabled,
+      marketCondition,
     ]
   );
 
@@ -1160,8 +1269,9 @@ export const usePaperTrading = (
     (newSettings) => {
       if (!mountedRef.current) return;
 
-      console.log("🔧 거래 설정 업데이트:", newSettings);
+      console.log("🔧 거래 설정 업데이트 시작:", newSettings);
 
+      // 초기 자본 변경 처리
       if (
         newSettings.initialCapital &&
         newSettings.initialCapital !== customCapital
@@ -1175,53 +1285,200 @@ export const usePaperTrading = (
       setTradingSettings((prev) => {
         const updated = { ...prev, ...newSettings };
 
+        // 🔥 ENHANCED: 매매 조건 검증 및 정규화
         if (updated.tradingConditions?.buyConditions) {
-          const minBuy = updated.tradingConditions.buyConditions.minBuyScore;
-          if (minBuy !== undefined) {
-            updated.tradingConditions.buyConditions.minBuyScore = Math.max(
+          const buyConditions = updated.tradingConditions.buyConditions;
+          // 최소 매수 점수 범위 검증
+          if (buyConditions.minBuyScore !== undefined) {
+            buyConditions.minBuyScore = Math.max(
               3.0,
-              Math.min(10.0, minBuy)
+              Math.min(10.0, buyConditions.minBuyScore)
             );
+            console.log("📊 매수 점수 정규화:", buyConditions.minBuyScore);
+          }
+
+          // 가격 하락률 범위 검증
+          if (buyConditions.priceDropThreshold !== undefined) {
+            buyConditions.priceDropThreshold = Math.max(
+              -20,
+              Math.min(0, buyConditions.priceDropThreshold)
+            );
+            console.log(
+              "📉 가격 하락률 정규화:",
+              buyConditions.priceDropThreshold,
+              "%"
+            );
+          }
+
+          // RSI 과매도 범위 검증
+          if (buyConditions.rsiOversold !== undefined) {
+            buyConditions.rsiOversold = Math.max(
+              10,
+              Math.min(50, buyConditions.rsiOversold)
+            );
+            console.log("📈 RSI 과매도 정규화:", buyConditions.rsiOversold);
           }
         }
 
+        // 🔥 ENHANCED: 매도 조건 검증 및 정규화
+        if (updated.tradingConditions?.sellConditions) {
+          const sellConditions = updated.tradingConditions.sellConditions;
+
+          // 수익 목표 순서 검증
+          if (
+            sellConditions.profitTarget1 &&
+            sellConditions.profitTarget2 &&
+            sellConditions.profitTarget3
+          ) {
+            if (sellConditions.profitTarget1 >= sellConditions.profitTarget2) {
+              sellConditions.profitTarget2 = sellConditions.profitTarget1 + 2;
+            }
+            if (sellConditions.profitTarget2 >= sellConditions.profitTarget3) {
+              sellConditions.profitTarget3 = sellConditions.profitTarget2 + 3;
+            }
+            console.log(
+              "🎯 수익 목표 순서 정규화:",
+              sellConditions.profitTarget1,
+              "%→",
+              sellConditions.profitTarget2,
+              "%→",
+              sellConditions.profitTarget3,
+              "%"
+            );
+          }
+
+          // 손절매 범위 검증
+          if (sellConditions.stopLoss !== undefined) {
+            sellConditions.stopLoss = Math.max(
+              -30,
+              Math.min(0, sellConditions.stopLoss)
+            );
+            console.log("⛔ 손절매 정규화:", sellConditions.stopLoss, "%");
+          }
+        }
+
+        // 🔥 ENHANCED: 신호 생성기 설정 업데이트
         try {
           if (signalGenerator && signalGenerator.updateSettings) {
             signalGenerator.updateSettings(updated);
+            console.log("✅ 신호 생성기 설정 업데이트 완료");
           }
         } catch (error) {
-          console.warn("신호 생성기 설정 업데이트 실패:", error);
+          console.warn("⚠️ 신호 생성기 설정 업데이트 실패:", error);
         }
 
+        // 🔥 ENHANCED: 페이퍼 트레이딩 엔진 설정 업데이트
         try {
           if (paperTradingEngine && paperTradingEngine.updateSettings) {
             paperTradingEngine.updateSettings(updated);
+            console.log("✅ 페이퍼 트레이딩 엔진 설정 업데이트 완료");
           }
         } catch (error) {
-          console.warn("페이퍼 트레이딩 엔진 설정 업데이트 실패:", error);
+          console.warn("⚠️ 페이퍼 트레이딩 엔진 설정 업데이트 실패:", error);
         }
 
+        // 🔥 ENHANCED: 동적 포지션 관리 설정 업데이트
         if (updated.dynamicPosition) {
           setDynamicPositionEnabled(updated.dynamicPosition.enabled);
           try {
             paperTradingEngine.setDynamicPositionEnabled?.(
               updated.dynamicPosition.enabled
             );
+            console.log(
+              "🎯 동적 포지션 관리 설정:",
+              updated.dynamicPosition.enabled ? "활성화" : "비활성화"
+            );
           } catch (error) {
-            console.warn("동적 포지션 관리 설정 업데이트 실패:", error);
+            console.warn("⚠️ 동적 포지션 관리 설정 업데이트 실패:", error);
           }
         }
 
+        // 🔥 ENHANCED: 글로벌 스토어 업데이트
+        try {
+          updateGlobalTradingSettings(updated);
+          console.log("🌐 글로벌 거래 설정 업데이트 완료");
+        } catch (error) {
+          console.warn("⚠️ 글로벌 설정 업데이트 실패:", error);
+        }
+
+        console.log("✅ 거래 설정 업데이트 완료:", {
+          minBuyScore: updated.tradingConditions?.buyConditions?.minBuyScore,
+          priceDropThreshold:
+            updated.tradingConditions?.buyConditions?.priceDropThreshold,
+          profitTargets: [
+            updated.tradingConditions?.sellConditions?.profitTarget1,
+            updated.tradingConditions?.sellConditions?.profitTarget2,
+            updated.tradingConditions?.sellConditions?.profitTarget3,
+          ],
+          stopLoss: updated.tradingConditions?.sellConditions?.stopLoss,
+          dynamicEnabled: updated.dynamicPosition?.enabled,
+        });
+
         addLog(
-          `✅ 거래 설정 업데이트 완료 - minBuyScore: ${updated.tradingConditions?.buyConditions?.minBuyScore || updated.minBuyScore}`,
+          `✅ 거래 설정 업데이트 완료 - 매수점수: ${updated.tradingConditions?.buyConditions?.minBuyScore || "기본값"}, 동적관리: ${updated.dynamicPosition?.enabled ? "ON" : "OFF"}`,
           "success"
         );
 
         return updated;
       });
     },
-    [customCapital, addLog, setDynamicPositionEnabled]
+    [
+      customCapital,
+      addLog,
+      setDynamicPositionEnabled,
+      updateGlobalTradingSettings,
+    ]
   );
+
+  // 🔥 NEW: 거래 설정 디버깅 함수
+  const debugTradingSettings = useCallback(() => {
+    console.log("🔍=== 거래 설정 디버깅 시작 ===");
+    console.log("현재 tradingSettings:", tradingSettings);
+    console.log("tradingSettingsRef.current:", tradingSettingsRef.current);
+
+    const buyConditions = tradingSettings.tradingConditions?.buyConditions;
+    const sellConditions = tradingSettings.tradingConditions?.sellConditions;
+
+    console.log("📊 매수 조건:", {
+      minBuyScore: buyConditions?.minBuyScore,
+      priceDropThreshold: buyConditions?.priceDropThreshold,
+      rsiOversold: buyConditions?.rsiOversold,
+      volumeThreshold: buyConditions?.volumeThreshold,
+    });
+
+    console.log("🎯 매도 조건:", {
+      profitTarget1: sellConditions?.profitTarget1,
+      profitTarget2: sellConditions?.profitTarget2,
+      profitTarget3: sellConditions?.profitTarget3,
+      stopLoss: sellConditions?.stopLoss,
+      rsiOverbought: sellConditions?.rsiOverbought,
+    });
+
+    console.log("🎛️ 시스템 상태:", {
+      testMode: testMode,
+      dynamicPositionEnabled: dynamicPositionEnabled,
+      isActive: isActive,
+      marketCondition: marketCondition?.overallBuyScore,
+    });
+
+    // 페이퍼 트레이딩 엔진 설정 확인
+    const engineSettings = paperTradingEngine.getCurrentSettings?.();
+    console.log("🔧 엔진 설정:", engineSettings);
+
+    addLog(
+      `🔍 설정 디버깅: 매수점수=${buyConditions?.minBuyScore}, 하락률=${buyConditions?.priceDropThreshold}%, RSI=${buyConditions?.rsiOversold}, 수익목표=[${sellConditions?.profitTarget1}%,${sellConditions?.profitTarget2}%,${sellConditions?.profitTarget3}%], 손절=${sellConditions?.stopLoss}%`,
+      "debug"
+    );
+
+    console.log("🔍=== 거래 설정 디버깅 완료 ===");
+  }, [
+    tradingSettings,
+    testMode,
+    dynamicPositionEnabled,
+    isActive,
+    marketCondition,
+    addLog,
+  ]);
 
   // toggleTestMode 함수 수정
   const toggleTestMode = useCallback(() => {

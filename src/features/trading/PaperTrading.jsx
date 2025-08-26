@@ -36,19 +36,15 @@ const PaperTrading = () => {
     isActive,
     isConnected,
     connectionStatus,
-    lastSignal,
     logs,
     signals,
-    marketData,
     marketCondition,
     monitoringStats,
-    marketSentiment,
 
     // 코인 관련
     favoriteCoins,
     topCoins,
     currentSelectedCoins,
-    selectedCoins,
 
     // 시스템 상태
     centralDataReady,
@@ -60,13 +56,10 @@ const PaperTrading = () => {
     optimizationPlan,
     positionAnalysis,
     riskAssessment,
-    cashOptimization,
 
     // 설정
     tradingMode,
     setTradingMode,
-    topCoinsLimit,
-    setTopCoinsLimit,
     tradingSettings,
     setTradingSettings,
     testMode,
@@ -76,18 +69,11 @@ const PaperTrading = () => {
     startPaperTrading,
     stopPaperTrading,
     addLog,
-    toggleTestMode,
-    refreshMarketCondition,
-    fetchMarketSentiment,
     updateTopCoinsUI,
 
     // 동적 포지션 관리
-    toggleDynamicPositionManagement,
     generateOptimizationPlan,
     executeOptimizationPlan,
-    updatePositionAnalysis,
-    updateRiskAssessment,
-    updateCashOptimization,
 
     // 코인 관리
     addFavoriteCoin,
@@ -98,13 +84,6 @@ const PaperTrading = () => {
     hasSelectedCoins,
     tradingStats,
   } = usePaperTrading(userId, null);
-
-  // ✅ 보조 훅들
-  const {
-    settings = {},
-    isDirty = false,
-    saveSettings
-  } = useTradingSettings();
 
   // ✅ 초기화
   useEffect(() => {
@@ -154,19 +133,6 @@ const PaperTrading = () => {
       stopPaperTrading();
     }
   }, [isActive, hasSelectedCoins, favoriteCoins.length, isSystemReady, startPaperTrading, stopPaperTrading, addLog]);
-
-  // ✅ 신호 새로고침
-  const handleRefreshSignals = useCallback(async () => {
-    if (!isActive) {
-      addLog?.("❌ 거래가 활성화되지 않았습니다", "warning");
-      return;
-    }
-
-    addLog?.("🔄 신호 새로고침 시작", "info");
-    await refreshMarketCondition();
-    await updatePortfolio(true);
-    addLog?.("✅ 신호 새로고침 완료", "success");
-  }, [isActive, refreshMarketCondition, updatePortfolio, addLog]);
 
   // ✅ 성과 데이터
   const performance = useMemo(() => {
@@ -340,8 +306,8 @@ const PaperTrading = () => {
       {/* 헤더 */}
       <div className="bg-white dark:bg-gray-800 shadow">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-6">
-            <div className="flex items-center">
+          <div className="flex justify-between items-center flex-col md:flex-row  py-6">
+            <div className="flex items-center flex-col md:flex-row space-y-2">
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
                 페이퍼 트레이딩
               </h1>
@@ -362,7 +328,7 @@ const PaperTrading = () => {
 
             {/* 시스템 상태 표시 */}
             <div className="flex items-center space-x-4 text-sm">
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2 dark:text-slate-400">
                 <span>연결: {connectionStatus}</span>
                 <span>신호: {signals?.length || 0}개</span>
                 <span>코인: {selectedCoinsCount || 0}개</span>
@@ -378,7 +344,7 @@ const PaperTrading = () => {
           {/* 탭 네비게이션 */}
           <div className="lg:col-span-3">
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
-              <div className="border-b border-gray-200 dark:border-gray-700">
+              <div className="border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
                 <nav className="-mb-px flex space-x-8 px-6">
                   {[
                     { id: 'dashboard', label: '대시보드', icon: BarChart3Icon },

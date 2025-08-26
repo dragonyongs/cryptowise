@@ -1,72 +1,167 @@
 // src/features/trading/hooks/useTradingSettings.js
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { usePortfolioStore } from "../../../stores/portfolioStore";
-import { useTradingStore } from "../../../stores/tradingStore"; // 추가
+import { useTradingStore } from "../../../stores/tradingStore";
 import { normalizeSettings } from "../utils/settingsNormalizer";
 import { adjustOtherAllocations } from "../utils/portfolioCalculations";
 import { TRADING_DEFAULTS } from "../constants/tradingDefaults";
 
+const STORAGE_KEY = "cryptowise_trading_settings";
+
+// 🔥 기본 설정 정의
+const getDefaultSettings = () => ({
+  allocation: { cash: 0.4, t1: 0.42, t2: 0.15, t3: 0.03 },
+  tradingConditions: {
+    buyConditions: {
+      priceDropThreshold: -3,
+      rsiOversold: 30,
+      minBuyScore: 7.0,
+      volumeThreshold: 1.2,
+    },
+    sellConditions: {
+      profitTarget1: 3,
+      profitTarget2: 5,
+      profitTarget3: 8,
+      stopLoss: -6,
+      rsiOverbought: 70,
+      timeBasedExit: 7,
+    },
+  },
+  indicators: {
+    rsi: { enabled: true, oversold: 30, overbought: 70 },
+    macd: { enabled: true },
+    bollinger: { enabled: true },
+    volume: { enabled: true, threshold: 1.5 },
+  },
+  riskManagement: {
+    stopLoss: 8,
+    takeProfit: 15,
+    maxPositions: 5,
+  },
+  advanced: {
+    signalConfirmationTime: 300,
+    maxConcurrentTrades: 3,
+    cooldownPeriod: 3600,
+    volatilityThreshold: 0.05,
+  },
+});
+
 export const useTradingSettings = (initialSettings = {}) => {
-  // 포트폴리오 스토어 연결
-  const { portfolioData, updatePortfolio } = usePortfolioStore();
+  // localStorage에서 초기 설정 로드 (정규화 적용)
+  const loadSettingsFromStorage = useCallback(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsedSettings = JSON.parse(stored);
+        console.log("📚 localStorage에서 설정 로드:", parsedSettings);
+        // 🔥 FIXED: 초기 로드 시에만 정규화 적용
+        return normalizeSettings({
+          ...getDefaultSettings(),
+          ...parsedSettings,
+        });
+      }
+    } catch (error) {
+      console.warn("⚠️ localStorage 로드 실패:", error);
+    }
 
-  // 전역 trading store의 즉시 업데이트 함수 가져오기 (getState 호출을 내부에서 사용)
-  const tradingStore = useTradingStore; // 직접 getState()로 호출할 것
+    const defaultSettings = getDefaultSettings();
+    console.log("🔧 기본 설정 사용:", defaultSettings);
+    return normalizeSettings({ ...defaultSettings, ...initialSettings });
+  }, [initialSettings]);
 
-  const [settings, setSettings] = useState(() =>
-    normalizeSettings(initialSettings)
-  );
+  const { portfolioData } = usePortfolioStore();
+  const tradingStore = useTradingStore;
+
+  const [settings, setSettings] = useState(loadSettingsFromStorage);
   const [isDirty, setIsDirty] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [tradingMode, setTradingMode] = useState("paper"); // paper | live
+  const [tradingMode, setTradingMode] = useState("paper");
 
-  // ====== 내부 헬퍼: store 동기화 ======
-  const syncToStore = useCallback((rawSettings) => {
-    try {
-      const normalized = normalizeSettings(rawSettings);
-      // tradingStore의 updateTradingSettings는 내부적으로 set() 처리함
-      if (
-        typeof tradingStore.getState === "function" &&
-        tradingStore.getState().updateTradingSettings
-      ) {
-        tradingStore.getState().updateTradingSettings(normalized);
+  // localStorage 저장 함수
+  const saveToStorage = useCallback(
+    (settingsToSave) => {
+      try {
+        const dataToSave = {
+          ...settingsToSave,
+          tradingMode,
+          savedAt: new Date().toISOString(),
+        };
+
+        console.log("💾 localStorage 저장할 데이터:", dataToSave);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+        console.log("✅ localStorage 저장 완료");
+        return true;
+      } catch (error) {
+        console.error("❌ localStorage 저장 실패:", error);
+        return false;
       }
-    } catch (e) {
-      console.warn("store 동기화 실패:", e);
-    }
-  }, []);
+    },
+    [tradingMode]
+  );
 
-  // 실제 설정 저장 함수
+  // store 동기화 함수
+  const syncToStore = useCallback(
+    (rawSettings) => {
+      try {
+        if (
+          typeof tradingStore.getState === "function" &&
+          tradingStore.getState().updateTradingSettings
+        ) {
+          tradingStore.getState().updateTradingSettings(rawSettings);
+        }
+
+        if (typeof window !== "undefined") {
+          window.currentTradingSettings = rawSettings;
+          window.dispatchEvent(
+            new CustomEvent("tradingSettingsChanged", {
+              detail: rawSettings,
+            })
+          );
+        }
+      } catch (e) {
+        console.warn("store 동기화 실패:", e);
+      }
+    },
+    [tradingStore]
+  );
+
+  // 🔥 FIXED: 설정 업데이트 함수 - 정규화 제거
+  const updateSettings = useCallback(
+    (newSettings) => {
+      console.log("📝 updateSettings 호출:", newSettings);
+
+      // 🔥 KEY FIX: 정규화하지 않고 그대로 저장
+      setSettings(newSettings);
+      setIsDirty(true);
+
+      // 자동 저장 (디바운싱)
+      const timeoutId = setTimeout(() => {
+        saveToStorage(newSettings);
+        syncToStore(newSettings);
+      }, 500);
+
+      return () => clearTimeout(timeoutId);
+    },
+    [saveToStorage, syncToStore]
+  );
+
+  // 명시적 저장 함수 (저장 버튼 클릭 시)
   const saveSettings = useCallback(async () => {
     setIsLoading(true);
     try {
-      const normalized = normalizeSettings(settings);
+      // 🔥 FIXED: 저장 시에도 정규화하지 않음
+      const storageSaved = saveToStorage(settings);
+      if (!storageSaved) {
+        throw new Error("localStorage 저장 실패");
+      }
 
-      // 로컬 스토리지에 저장
-      localStorage.setItem(
-        "cryptowise_trading_settings",
-        JSON.stringify({
-          ...normalized,
-          tradingMode,
-          savedAt: new Date().toISOString(),
-        })
-      );
-
-      // 트레이딩 엔진에 설정 적용 (기존 로직 유지)
+      // 트레이딩 엔진에 설정 적용
       if (
         window.paperTradingEngine &&
         typeof window.paperTradingEngine.updateSettings === "function"
       ) {
         window.paperTradingEngine.updateSettings({
-          allocation: normalized.allocation,
-          indicators: normalized.indicators,
-          riskManagement: {
-            ...normalized.riskManagement,
-            // 내부 엔진이 소수(0.x)로 기대하면 변환
-            stopLoss: normalized.riskManagement.stopLoss / 100,
-            takeProfit: normalized.riskManagement.takeProfit / 100,
-          },
-          advanced: normalized.advanced,
+          ...settings,
           tradingMode,
         });
       }
@@ -77,59 +172,33 @@ export const useTradingSettings = (initialSettings = {}) => {
         typeof window.centralSettingsManager.updateTradingSettings ===
           "function"
       ) {
-        window.centralSettingsManager.updateTradingSettings(normalized);
+        window.centralSettingsManager.updateTradingSettings(settings);
       }
 
-      // ✅ 전역 store에도 동기화
-      syncToStore(normalized);
+      syncToStore(settings);
 
       setIsDirty(false);
+      console.log("✅ 설정 저장 완료:", settings);
       return { success: true };
     } catch (error) {
-      console.error("설정 저장 실패:", error);
+      console.error("❌ 설정 저장 실패:", error);
       return { success: false, error: error.message };
     } finally {
       setIsLoading(false);
     }
-  }, [settings, tradingMode, syncToStore]);
+  }, [settings, tradingMode, saveToStorage, syncToStore]);
 
-  // 저장된 설정 불러오기 -> 로컬 + store 동기화
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("cryptowise_trading_settings");
-      if (saved) {
-        const parsedSettings = JSON.parse(saved);
-        const normalized = normalizeSettings(parsedSettings);
-        setSettings(normalized);
-        setTradingMode(parsedSettings.tradingMode || "paper");
-
-        // store에 동기화 (중요)
-        syncToStore(normalized);
-      } else {
-        // 초기값이 있으면 그것도 store에 반영
-        const normalizedInit = normalizeSettings(initialSettings || {});
-        if (Object.keys(normalizedInit).length > 0) {
-          syncToStore(normalizedInit);
-        }
-      }
-    } catch (error) {
-      console.warn("저장된 설정 불러오기 실패:", error);
-    }
-    // initialSettings는 훅 인자로 받는 경우 의존성에 포함할 수 있음
-  }, []); // 의도적으로 빈 의존성: 컴포넌트 마운트 시 한 번만 로드/동기화
-
-  // 거래모드 변경 (토글) -> store 동기화
+  // 거래모드 변경
   const toggleTradingMode = useCallback(() => {
     const newMode = tradingMode === "paper" ? "live" : "paper";
     setTradingMode(newMode);
     setIsDirty(true);
 
-    // store의 tradingSettings 에도 tradingMode 반영 (선택사항: store에 저장하려면 다음 호출)
     const merged = { ...settings, tradingMode: newMode };
     syncToStore(merged);
   }, [tradingMode, settings, syncToStore]);
 
-  // 할당 변경 핸들러 (포트폴리오 총액 반영) + store 동기화
+  // 할당 변경 핸들러
   const updateAllocation = useCallback(
     (key, value) => {
       setSettings((prev) => {
@@ -138,18 +207,18 @@ export const useTradingSettings = (initialSettings = {}) => {
           value,
           prev.allocation
         );
-        const newSettings = {
-          ...prev,
-          allocation: newAllocations,
-        };
+        const newSettings = { ...prev, allocation: newAllocations };
         setIsDirty(true);
 
-        // 즉시 store에 동기화
-        syncToStore(newSettings);
+        setTimeout(() => {
+          saveToStorage(newSettings);
+          syncToStore(newSettings);
+        }, 100);
+
         return newSettings;
       });
     },
-    [syncToStore]
+    [saveToStorage, syncToStore]
   );
 
   // 현재 포트폴리오 총액 기반 할당 금액 계산
@@ -164,7 +233,7 @@ export const useTradingSettings = (initialSettings = {}) => {
     };
   }, [settings.allocation, portfolioData]);
 
-  // 지표 업데이트 + store 동기화
+  // 지표 업데이트
   const updateIndicator = useCallback(
     (indicatorKey, property, value) => {
       setSettings((prev) => {
@@ -179,14 +248,19 @@ export const useTradingSettings = (initialSettings = {}) => {
           },
         };
         setIsDirty(true);
-        syncToStore(newSettings);
+
+        setTimeout(() => {
+          saveToStorage(newSettings);
+          syncToStore(newSettings);
+        }, 100);
+
         return newSettings;
       });
     },
-    [syncToStore]
+    [saveToStorage, syncToStore]
   );
 
-  // 리스크 관리 변경 핸들러 + store 동기화
+  // 리스크 관리 변경 핸들러
   const updateRiskManagement = useCallback(
     (property, value) => {
       setSettings((prev) => {
@@ -198,33 +272,34 @@ export const useTradingSettings = (initialSettings = {}) => {
           },
         };
         setIsDirty(true);
-        syncToStore(newSettings);
+
+        setTimeout(() => {
+          saveToStorage(newSettings);
+          syncToStore(newSettings);
+        }, 100);
+
         return newSettings;
       });
     },
-    [syncToStore]
-  );
-
-  // 전체 설정 업데이트 (외부에서 전체 객체로 바꿀 때) + store 동기화
-  const updateSettings = useCallback(
-    (newSettings) => {
-      const normalized = normalizeSettings(newSettings);
-      setSettings(normalized);
-      setIsDirty(true);
-      syncToStore(normalized);
-    },
-    [syncToStore]
+    [saveToStorage, syncToStore]
   );
 
   // 설정 초기화
   const resetSettings = useCallback(() => {
-    const normalized = normalizeSettings({});
-    setSettings(normalized);
-    setTradingMode("paper");
-    setIsDirty(true);
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      const defaultSettings = getDefaultSettings();
+      const normalized = normalizeSettings(defaultSettings); // 초기화 시에만 정규화
 
-    // store에도 초기값 반영
-    syncToStore(normalized);
+      setSettings(normalized);
+      setTradingMode("paper");
+      setIsDirty(true);
+
+      syncToStore(normalized);
+      console.log("🔄 설정 초기화 완료");
+    } catch (error) {
+      console.error("❌ 설정 초기화 실패:", error);
+    }
   }, [syncToStore]);
 
   // 활성화된 지표 목록
@@ -237,7 +312,6 @@ export const useTradingSettings = (initialSettings = {}) => {
   // 지표 활성화 토글
   const toggleIndicator = useCallback(
     (indicatorKey) => {
-      // 안전하게 기존 값이 없으면 초기화
       const enabled = !!(
         settings.indicators &&
         settings.indicators[indicatorKey] &&
@@ -248,20 +322,25 @@ export const useTradingSettings = (initialSettings = {}) => {
     [settings.indicators, updateIndicator]
   );
 
+  // 컴포넌트 마운트 시 설정 동기화
+  useEffect(() => {
+    syncToStore(settings);
+  }, []);
+
   return {
     settings,
     isDirty,
     isLoading,
     tradingMode,
-    allocationAmounts, // 실제 금액 정보 제공
+    allocationAmounts,
     activeIndicators,
     updateAllocation,
     updateIndicator,
     updateRiskManagement,
     updateSettings,
     resetSettings,
-    saveSettings, // 실제 저장 함수
-    toggleTradingMode, // 거래모드 토글
+    saveSettings,
+    toggleTradingMode,
     toggleIndicator,
   };
 };

@@ -1,15 +1,30 @@
 // src/features/trading/components/TradingSettings/index.jsx - 완전한 버전
-
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
-  ChevronDownIcon, ChevronUpIcon, CogIcon, PieChartIcon, ClockIcon,
-  TrendingUpIcon, TrendingDownIcon, BarChart3Icon, SaveIcon, RefreshCwIcon,
-  AlertTriangleIcon, InfoIcon, TestTubeIcon, SparklesIcon, ShieldCheckIcon,
-  ZapIcon, XIcon, SlidersIcon, DollarSignIcon, PercentIcon, TimerIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  CogIcon,
+  PieChartIcon,
+  ClockIcon,
+  TrendingUpIcon,
+  TrendingDownIcon,
+  BarChart3Icon,
+  SaveIcon,
+  RefreshCwIcon,
+  AlertTriangleIcon,
+  InfoIcon,
+  TestTubeIcon,
+  SparklesIcon,
+  ShieldCheckIcon,
+  ZapIcon,
+  XIcon,
+  SlidersIcon,
+  DollarSignIcon,
+  PercentIcon,
+  TimerIcon,
 } from "lucide-react";
-import {
-  CheckCircleIcon
-} from '@heroicons/react/24/outline';
+import { CheckCircleIcon } from '@heroicons/react/24/outline';
+
 // 🔥 개선된 훅 사용
 import { useTradingSettings } from "../../hooks/useTradingSettings";
 import { usePortfolioStore } from "../../../../stores/portfolioStore";
@@ -18,6 +33,7 @@ import { TRADING_DEFAULTS } from "../../constants/tradingDefaults";
 // 컴포넌트 import (기존 유지)
 import NumberInput from "../common/NumberInput";
 import PortfolioAllocation from "./PortfolioAllocation";
+import TradingConditions from "./TradingConditions";
 import TechnicalIndicators from "./TechnicalIndicators";
 import RiskManagement from "./RiskManagement";
 import AdvancedSettings from "./AdvancedSettings";
@@ -52,7 +68,6 @@ const adjustOtherAllocations = (changedKey, newValue, currentAllocations) => {
 const normalizeAllocations = (allocations) => {
   const { cash, t1, t2, t3 } = allocations;
   const total = cash + t1 + t2 + t3;
-
   if (Math.abs(total - 1) > 0.001) {
     return {
       cash: cash / total,
@@ -101,6 +116,12 @@ const TradingSettings = ({ isActive = false, onClose }) => {
       description: "자산 배분과 투자 전략을 설정합니다"
     },
     {
+      id: "conditions",
+      label: "매매 조건",
+      icon: ZapIcon,
+      description: "매매 조건 설정"
+    },
+    {
       id: "indicators",
       label: "기술적 지표",
       icon: BarChart3Icon,
@@ -120,16 +141,23 @@ const TradingSettings = ({ isActive = false, onClose }) => {
     }
   ];
 
+  // 🔥 FIXED: 매수/매도 조건 객체 메모이제이션
+  const buyConditions = useMemo(() => {
+    return settings.tradingConditions?.buyConditions || {};
+  }, [settings.tradingConditions?.buyConditions]);
+
+  const sellConditions = useMemo(() => {
+    return settings.tradingConditions?.sellConditions || {};
+  }, [settings.tradingConditions?.sellConditions]);
+
   // 🔥 실제 저장 핸들러 (기존 시뮬레이션에서 실제 저장으로 변경)
   const handleSave = useCallback(async () => {
     setErrors({});
-
     try {
       const result = await saveSettings();
       if (result.success) {
         setShowSuccess(true);
         setTimeout(() => setShowSuccess(false), 3000);
-
         // 성공 알림
         if (window.addLog) {
           window.addLog("✅ 트레이딩 설정이 성공적으로 저장되었습니다", "success");
@@ -148,7 +176,6 @@ const TradingSettings = ({ isActive = false, onClose }) => {
     if (window.confirm("모든 설정을 기본값으로 초기화하시겠습니까?")) {
       resetSettings();
       setErrors({});
-
       if (window.addLog) {
         window.addLog("🔄 트레이딩 설정이 기본값으로 초기화되었습니다", "info");
       }
@@ -189,182 +216,171 @@ const TradingSettings = ({ isActive = false, onClose }) => {
     updateRiskManagement(property, value);
   }, [updateRiskManagement]);
 
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col">
+  // 🔥 FIXED: 매수 조건 변경 핸들러 - 함수형 업데이트로 무한 렌더링 방지
+  // index.jsx의 handleBuyConditionChange에 디버깅 추가
+  const handleBuyConditionChange = useCallback((property, value) => {
+    console.log("🟢 handleBuyConditionChange 호출:", property, value, typeof value);
+    console.log("🔍 현재 settings.tradingConditions:", settings.tradingConditions);
 
-        {/* 🔥 헤더 (완전히 개선) */}
+    updateSettings(prevSettings => {
+      const newSettings = {
+        ...prevSettings,
+        tradingConditions: {
+          ...prevSettings.tradingConditions,
+          buyConditions: {
+            ...prevSettings.tradingConditions?.buyConditions,
+            [property]: value
+          }
+        }
+      };
+
+      console.log("📝 updateSettings로 전달할 새 설정:", newSettings);
+      console.log("🔍 새 buyConditions:", newSettings.tradingConditions.buyConditions);
+
+      return newSettings;
+    });
+  }, [updateSettings]);
+
+  // 🔥 FIXED: 매도 조건 변경 핸들러 - 함수형 업데이트로 무한 렌더링 방지
+  const handleSellConditionChange = useCallback((property, value) => {
+    console.log("🔄 매도 조건 변경:", property, value);
+
+    updateSettings(prevSettings => ({
+      ...prevSettings,
+      tradingConditions: {
+        ...prevSettings.tradingConditions,
+        sellConditions: {
+          ...prevSettings.tradingConditions?.sellConditions,
+          [property]: value
+        }
+      }
+    }));
+  }, [updateSettings]);
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] overflow-hidden">
+        {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
-          <div className="flex items-center space-x-4">
-            <div className="flex items-center space-x-2">
-              <CogIcon className="w-6 h-6 text-blue-600" />
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded-lg">
+              <CogIcon className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
                 트레이딩 설정
               </h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                포트폴리오 할당과 거래 전략을 설정하세요.
+                {isDirty && " 변경사항을 적용하려면 저장 버튼을 클릭하세요."}
+                {isActive && " 활성 거래 중에는 일부 설정이 다음 거래부터 적용됩니다."}
+              </p>
             </div>
-
-            {/* 🔥 거래모드 토글 (새 기능) */}
-            <div className="flex items-center space-x-2 px-3 py-1 bg-gray-50 dark:bg-gray-700 rounded-lg">
-              <span className="text-sm text-gray-600 dark:text-gray-300">거래모드:</span>
-              <button
-                onClick={toggleTradingMode}
-                className={`px-3 py-1 rounded-full text-sm font-medium transition-all ${tradingMode === "live"
-                  ? "bg-red-100 text-red-700 border-2 border-red-200 hover:bg-red-200"
-                  : "bg-green-100 text-green-700 border-2 border-green-200 hover:bg-green-200"
-                  }`}
-                title={`현재: ${tradingMode === "live" ? "실거래" : "페이퍼트레이딩"} 모드`}
-              >
-                {tradingMode === "live" ? "🔴 실거래" : "🟢 페이퍼"}
-              </button>
-            </div>
-
-            {/* 🔥 총 자산 표시 (동적 값) */}
-            <div className="flex items-center space-x-2 px-3 py-1 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-              <DollarSignIcon className="w-4 h-4 text-blue-600" />
-              <div className="text-sm">
-                <span className="text-gray-600 dark:text-gray-300">총 자산: </span>
-                <span className="font-bold text-blue-600 dark:text-blue-400">
-                  ₩{allocationAmounts.total.toLocaleString()}
-                </span>
-              </div>
-            </div>
-
-            {/* 🔥 활성 상태 표시 */}
-            {isActive && (
-              <div className="flex items-center space-x-1 px-2 py-1 bg-yellow-100 text-yellow-800 rounded-lg text-xs font-medium">
-                <ZapIcon className="w-3 h-3" />
-                <span>활성 거래 중</span>
-              </div>
-            )}
           </div>
 
-          <div className="flex items-center space-x-3">
-            {/* 성공 메시지 */}
+          <div className="flex items-center gap-2">
+            {/* 성공 알림 */}
             {showSuccess && (
-              <div className="flex items-center space-x-2 text-green-600 text-sm font-medium">
+              <div className="flex items-center gap-2 px-3 py-1 bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 rounded-lg text-sm">
                 <CheckCircleIcon className="w-4 h-4" />
-                <span>저장 완료!</span>
+                저장 완료
               </div>
             )}
 
-            {/* 오류 메시지 */}
-            {errors.general && (
-              <div className="flex items-center space-x-2 text-red-600 text-sm font-medium max-w-xs">
-                <AlertTriangleIcon className="w-4 h-4" />
-                <span className="truncate">{errors.general}</span>
-              </div>
-            )}
+            {/* 저장 버튼 */}
+            <button
+              onClick={handleSave}
+              disabled={isLoading || !isDirty}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isDirty && !isLoading
+                ? "bg-blue-600 hover:bg-blue-700 text-white"
+                : "bg-gray-100 dark:bg-gray-700 text-gray-400 cursor-not-allowed"
+                }`}
+            >
+              {isLoading ? (
+                <RefreshCwIcon className="w-4 h-4 animate-spin" />
+              ) : (
+                <SaveIcon className="w-4 h-4" />
+              )}
+              {isLoading ? "저장 중..." : "저장"}
+            </button>
 
             {/* 초기화 버튼 */}
             <button
               onClick={handleReset}
-              className="flex items-center space-x-2 px-3 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
-              title="기본값으로 초기화"
+              className="flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium transition-colors"
             >
               <RefreshCwIcon className="w-4 h-4" />
-              <span className="text-sm">초기화</span>
-            </button>
-
-            {/* 저장 버튼 (개선) */}
-            <button
-              onClick={handleSave}
-              disabled={!isDirty || isLoading}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-all ${isDirty && !isLoading
-                ? "bg-blue-600 text-white hover:bg-blue-700 shadow-md"
-                : "bg-gray-200 text-gray-400 cursor-not-allowed"
-                }`}
-            >
-              {isLoading ? (
-                <>
-                  <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"></div>
-                  <span>저장 중...</span>
-                </>
-              ) : (
-                <>
-                  <SaveIcon className="w-4 h-4" />
-                  <span>저장</span>
-                </>
-              )}
+              초기화
             </button>
 
             {/* 닫기 버튼 */}
             <button
               onClick={onClose}
               className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-              title="설정 닫기"
             >
               <XIcon className="w-5 h-5 text-gray-500" />
             </button>
           </div>
         </div>
 
-        {/* 변경사항 안내 (기존 로직 개선) */}
-        <div className="px-6 py-3 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800">
-          <div className="flex items-center space-x-2 text-blue-800 dark:text-blue-200">
-            <InfoIcon className="w-4 h-4" />
-            <p className="text-sm">
-              포트폴리오 할당과 거래 전략을 설정하세요.
-              {isDirty && " 변경사항을 적용하려면 저장 버튼을 클릭하세요."}
-              {isActive && " 활성 거래 중에는 일부 설정이 다음 거래부터 적용됩니다."}
-            </p>
+        {/* 에러 메시지 */}
+        {errors.general && (
+          <div className="mx-6 mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+            <div className="flex items-center gap-2">
+              <AlertTriangleIcon className="w-4 h-4 text-red-600 dark:text-red-400" />
+              <p className="text-sm text-red-800 dark:text-red-200">{errors.general}</p>
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* 메인 컨텐츠 */}
-        <div className="flex-1 flex overflow-hidden">
-          {/* 탭 내비게이션 (기존 로직 유지 + 스타일 개선) */}
-          <div className="w-64 border-r border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4 overflow-y-auto">
-            <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
-              설정 카테고리
-            </h3>
-
-            {tabs.map((tab) => {
-              const IconComponent = tab.icon;
-              const isActiveTab = activeTab === tab.id;
-
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`w-full text-left p-3 rounded-lg mb-2 transition-all ${isActiveTab
-                    ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-l-4 border-blue-600 shadow-sm"
-                    : "hover:bg-white dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
-                    }`}
-                >
-                  <div className="flex items-center space-x-3">
-                    <IconComponent className={`w-5 h-5 ${isActiveTab ? "text-blue-600 dark:text-blue-400" : "text-gray-500"
-                      }`} />
-                    <div>
+        {/* Main Content */}
+        <div className="flex h-[calc(90vh-8rem)]">
+          {/* Sidebar Tabs */}
+          <div className="w-64 border-r border-gray-200 dark:border-gray-700 p-4 overflow-y-auto">
+            <div className="space-y-1">
+              {tabs.map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${isActive
+                      ? "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
+                      : "text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+                      }`}
+                  >
+                    <Icon className="w-5 h-5 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
                       <div className="font-medium">{tab.label}</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                      <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
                         {tab.description}
                       </div>
                     </div>
-                  </div>
-
-                  {/* 활성 지표 표시 */}
-                  {tab.id === "indicators" && (
-                    <div className="mt-2 text-xs">
-                      <span className="text-gray-500">활성: </span>
-                      <span className="font-medium text-blue-600 dark:text-blue-400">
-                        {activeIndicators.length}개
-                      </span>
-                    </div>
-                  )}
-                </button>
-              );
-            })}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {/* 탭 컨텐츠 (기존 로직 유지 + props 개선) */}
-          <div className="flex-1 p-6 overflow-y-auto bg-white dark:bg-gray-900">
+          {/* Content Area */}
+          <div className="flex-1 p-6 overflow-y-auto">
             {activeTab === "portfolio" && (
               <PortfolioAllocation
                 allocation={settings.allocation}
                 onAllocationChange={handleAllocationChange}
-                initialCapital={allocationAmounts.total} // 🔥 동적 총액 전달
-                allocationAmounts={allocationAmounts} // 🔥 실제 금액 전달
-                totalValue={allocationAmounts.total}
+                initialCapital={allocationAmounts.total}
+                errors={errors}
+              />
+            )}
+
+            {/* 🔥 FIXED: 메모이제이션된 props 전달 */}
+            {activeTab === "conditions" && (
+              <TradingConditions
+                buyConditions={buyConditions}
+                sellConditions={sellConditions}
+                onBuyConditionChange={handleBuyConditionChange}
+                onSellConditionChange={handleSellConditionChange}
                 errors={errors}
               />
             )}
@@ -394,34 +410,6 @@ const TradingSettings = ({ isActive = false, onClose }) => {
                 errors={errors}
               />
             )}
-          </div>
-        </div>
-
-        {/* 하단 상태 바 (새로 추가) */}
-        <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-3 bg-gray-50 dark:bg-gray-800/50">
-          <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
-            <div className="flex items-center space-x-4">
-              <span>현재 탭: {tabs.find(t => t.id === activeTab)?.label}</span>
-              <span>•</span>
-              <span>총 자산: ₩{allocationAmounts.total.toLocaleString()}</span>
-              <span>•</span>
-              <span>모드: {tradingMode === "live" ? "실거래" : "페이퍼트레이딩"}</span>
-            </div>
-
-            <div className="flex items-center space-x-2">
-              {isDirty && (
-                <span className="text-orange-600 dark:text-orange-400">
-                  • 저장되지 않은 변경사항
-                </span>
-              )}
-
-              <span className="text-xs text-gray-500">
-                마지막 저장: {localStorage.getItem("cryptowise_trading_settings")
-                  ? new Date(JSON.parse(localStorage.getItem("cryptowise_trading_settings") || '{}').savedAt || Date.now()).toLocaleString()
-                  : "없음"
-                }
-              </span>
-            </div>
           </div>
         </div>
       </div>

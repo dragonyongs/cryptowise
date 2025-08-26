@@ -61,17 +61,165 @@ class PaperTradingEngine {
       TIER3: 0.15,
     };
 
+    // 🔥 시장 리스크 레벨 추가
+    this.marketRiskLevel = "MEDIUM"; // 기본값
+
     this.todayTrades = 0;
     this.lastResetDate = new Date().toDateString();
     this.debugMode = process.env.NODE_ENV === "development";
   }
 
-  getTradingSettings() {
-    // usePaperTrading store 참조 (의존성 주입 방식으로 개선)
-    if (typeof window !== "undefined" && window.tradingStore) {
-      return window.tradingStore.getState().tradingSettings;
+  // 🔥 NEW: 시장 리스크 레벨 설정
+  setMarketRiskLevel(level) {
+    const validLevels = ["LOW", "MEDIUM", "HIGH"];
+    if (!validLevels.includes(level)) {
+      this.log(
+        `⚠️ 잘못된 리스크 레벨: ${level}, 기본값 MEDIUM 사용`,
+        "warning"
+      );
+      level = "MEDIUM";
     }
-    return null;
+
+    this.marketRiskLevel = level;
+    this.log(`🎯 시장 리스크 레벨 설정: ${level}`, "info");
+
+    // 리스크 레벨에 따른 거래 조건 조정
+    this.adjustTradingLimitsByRiskLevel(level);
+    return this;
+  }
+
+  // 🔥 NEW: 리스크 레벨에 따른 거래 조건 조정
+  adjustTradingLimitsByRiskLevel(level) {
+    const baseScore = this.isTestMode ? 5.0 : 7.0;
+
+    switch (level) {
+      case "HIGH":
+        // 고위험: 엄격한 조건
+        this.tradingLimits.minSignalScore = baseScore + 1.5;
+        this.tradingLimits.reserveCashRatio = Math.min(
+          this.tradingLimits.reserveCashRatio + 0.1,
+          0.6
+        );
+        this.tradingLimits.maxDailyTrades = Math.max(
+          this.tradingLimits.maxDailyTrades - 2,
+          2
+        );
+        this.log(
+          `🔴 HIGH 리스크: 엄격한 조건 (최소점수: ${this.tradingLimits.minSignalScore})`,
+          "warning"
+        );
+        break;
+
+      case "MEDIUM":
+        // 보통: 표준 조건
+        this.tradingLimits.minSignalScore = baseScore;
+        // 기본 설정 유지
+        this.log(
+          `🟡 MEDIUM 리스크: 표준 조건 (최소점수: ${this.tradingLimits.minSignalScore})`,
+          "info"
+        );
+        break;
+
+      case "LOW":
+        // 저위험: 완화된 조건
+        this.tradingLimits.minSignalScore = Math.max(baseScore - 0.5, 3.5);
+        this.tradingLimits.reserveCashRatio = Math.max(
+          this.tradingLimits.reserveCashRatio - 0.05,
+          0.2
+        );
+        this.tradingLimits.maxDailyTrades =
+          this.tradingLimits.maxDailyTrades + 2;
+        this.log(
+          `🟢 LOW 리스크: 완화된 조건 (최소점수: ${this.tradingLimits.minSignalScore})`,
+          "info"
+        );
+        break;
+    }
+  }
+
+  // 🔥 NEW: 현재 리스크 레벨 반환
+  getMarketRiskLevel() {
+    return this.marketRiskLevel;
+  }
+
+  getTradingSettings() {
+    // 🔥 ENHANCED: 다양한 방법으로 설정 획득 시도
+    let settings = null;
+
+    // 1차: Window 글로벌 스토어에서 시도
+    if (typeof window !== "undefined" && window.tradingStore) {
+      try {
+        settings = window.tradingStore.getState().tradingSettings;
+        if (settings) {
+          console.log("📡 Window 스토어에서 설정 로드 성공");
+        }
+      } catch (error) {
+        console.warn("⚠️ Window 스토어 설정 로드 실패:", error);
+      }
+    }
+
+    // 2차: usePaperTrading에서 직접 전달된 설정 시도
+    if (
+      !settings &&
+      typeof window !== "undefined" &&
+      window.currentTradingSettings
+    ) {
+      try {
+        settings = window.currentTradingSettings;
+        console.log("📡 Window currentTradingSettings에서 설정 로드 성공");
+      } catch (error) {
+        console.warn("⚠️ Window currentTradingSettings 로드 실패:", error);
+      }
+    }
+
+    // 3차: 기본 설정 사용
+    if (!settings) {
+      console.log("📋 기본 설정 사용");
+      settings = {
+        tradingConditions: {
+          buyConditions: {
+            minBuyScore: this.isTestMode ? 5.5 : 7.0,
+            priceDropThreshold: this.isTestMode ? -3 : -5,
+            rsiOversold: this.isTestMode ? 35 : 30,
+            volumeThreshold: 1.2,
+          },
+          sellConditions: {
+            profitTarget1: 3,
+            profitTarget2: 5,
+            profitTarget3: 8,
+            stopLoss: -6,
+            rsiOverbought: this.isTestMode ? 65 : 70,
+          },
+        },
+      };
+    }
+
+    // 설정 구조 검증
+    if (!settings.tradingConditions) {
+      console.warn("⚠️ tradingConditions 구조 누락, 기본 구조 생성");
+      settings.tradingConditions = {
+        buyConditions: {
+          minBuyScore: this.isTestMode ? 5.5 : 7.0,
+          priceDropThreshold: this.isTestMode ? -3 : -5,
+          rsiOversold: this.isTestMode ? 35 : 30,
+          volumeThreshold: 1.2,
+        },
+        sellConditions: {
+          profitTarget1: 3,
+          profitTarget2: 5,
+          profitTarget3: 8,
+          stopLoss: -6,
+          rsiOverbought: this.isTestMode ? 65 : 70,
+        },
+      };
+    }
+
+    console.log("🔍 최종 로드된 설정:", {
+      buyConditions: settings.tradingConditions.buyConditions,
+      sellConditions: settings.tradingConditions.sellConditions,
+    });
+
+    return settings;
   }
 
   // ✅ 기존 메서드들 유지
@@ -770,40 +918,112 @@ class PaperTradingEngine {
       return { isValid: false, reason: "유효하지 않은 신호 타입" };
     }
 
-    // 저장된 설정 우선 적용
     const savedSettings = this.getTradingSettings();
-    let requiredScore;
+    console.log(`🔍 [${signal.symbol}] 신호 검증 시작:`, {
+      type: signal.type,
+      totalScore: signal.totalScore,
+      rsi: signal.rsi,
+      priceChangePercent: signal.priceChangePercent,
+    });
 
-    if (savedSettings && savedSettings.minBuyScore) {
-      requiredScore = savedSettings.minBuyScore;
+    // 🔥 ENHANCED: 매수 신호 검증
+    if (signal.type === "BUY") {
+      const buyConditions = savedSettings?.tradingConditions?.buyConditions;
 
-      // aggressive 전략 추가 완화
-      if (savedSettings.strategy === "aggressive") {
-        requiredScore = Math.max(requiredScore - 0.5, 4.0);
+      if (buyConditions) {
+        console.log(`🔍 [${signal.symbol}] 매수 조건 검증:`, buyConditions);
+
+        // 1. 가격 하락률 체크
+        if (
+          signal.priceChangePercent !== undefined &&
+          signal.priceChangePercent > buyConditions.priceDropThreshold
+        ) {
+          const reason = `가격 하락률 부족: ${signal.priceChangePercent?.toFixed(2)}% > ${buyConditions.priceDropThreshold}%`;
+          console.log(`❌ [${signal.symbol}] ${reason}`);
+          return { isValid: false, reason };
+        }
+
+        // 2. RSI 과매도 체크
+        if (
+          signal.rsi !== undefined &&
+          signal.rsi > buyConditions.rsiOversold
+        ) {
+          const reason = `RSI 과매도 조건 미달: ${signal.rsi?.toFixed(1)} > ${buyConditions.rsiOversold}`;
+          console.log(`❌ [${signal.symbol}] ${reason}`);
+          return { isValid: false, reason };
+        }
+
+        // 3. 최소 신호 점수 체크
+        const currentScore = signal.totalScore || 0;
+        if (currentScore < buyConditions.minBuyScore) {
+          const reason = `신호 점수 부족: ${currentScore.toFixed(1)} < ${buyConditions.minBuyScore}`;
+          console.log(`❌ [${signal.symbol}] ${reason}`);
+          return { isValid: false, reason };
+        }
+
+        // 4. 거래량 임계값 체크 (선택적)
+        if (
+          signal.volumeRatio !== undefined &&
+          buyConditions.volumeThreshold &&
+          signal.volumeRatio < buyConditions.volumeThreshold
+        ) {
+          const reason = `거래량 부족: ${signal.volumeRatio?.toFixed(2)}배 < ${buyConditions.volumeThreshold}배`;
+          console.log(`❌ [${signal.symbol}] ${reason}`);
+          return { isValid: false, reason };
+        }
+
+        console.log(`✅ [${signal.symbol}] 사용자 정의 매수 조건 통과`);
+      } else {
+        console.log(
+          `🔍 [${signal.symbol}] 사용자 정의 매수 조건 없음, 기본 검증 사용`
+        );
+
+        // 기존 로직 (하위호환성)
+        let requiredScore = this.isTestMode
+          ? 5.0
+          : this.tradingLimits.minSignalScore;
+        const currentScore = signal.totalScore || 0;
+
+        if (currentScore < requiredScore) {
+          const reason = `신호 점수 부족 (기본): ${currentScore.toFixed(1)} < ${requiredScore.toFixed(1)}`;
+          console.log(`❌ [${signal.symbol}] ${reason}`);
+          return { isValid: false, reason };
+        }
       }
-
-      // 테스트 모드 추가 완화
-      if (this.isTestMode) {
-        requiredScore = Math.max(requiredScore - 0.5, 3.5);
-      }
-    } else {
-      // 기본값 사용
-      requiredScore = this.isTestMode ? 5.0 : this.tradingLimits.minSignalScore;
     }
 
-    const currentScore = signal.totalScore || 0;
+    // 🔥 ENHANCED: 매도 신호 검증
+    if (signal.type === "SELL") {
+      const sellConditions = savedSettings?.tradingConditions?.sellConditions;
 
-    console.log(
-      `🔍 [${signal.symbol}] 점수 검증: ${currentScore.toFixed(1)} >= ${requiredScore.toFixed(1)} (저장된설정: ${!!savedSettings}, 전략: ${savedSettings?.strategy}, 테스트: ${this.isTestMode})`
-    );
+      if (sellConditions) {
+        console.log(`🔍 [${signal.symbol}] 매도 조건 검증:`, sellConditions);
 
-    if (currentScore < requiredScore) {
-      return {
-        isValid: false,
-        reason: `신호 점수 부족: ${currentScore.toFixed(1)} < ${requiredScore.toFixed(1)} (설정: ${savedSettings?.strategy || "default"}, ${this.isTestMode ? "테스트" : "실전"})`,
-      };
+        const coin = this.portfolio.coins.get(signal.symbol);
+        if (coin) {
+          const profitRate =
+            ((signal.price - coin.avgPrice) / coin.avgPrice) * 100;
+
+          // 수익 목표 또는 손절매 조건 확인
+          const shouldSell =
+            profitRate >= sellConditions.profitTarget1 ||
+            profitRate <= sellConditions.stopLoss ||
+            (signal.rsi && signal.rsi >= sellConditions.rsiOverbought);
+
+          if (!shouldSell) {
+            const reason = `매도 조건 미달: 수익률 ${profitRate.toFixed(2)}%, RSI ${signal.rsi || "N/A"}`;
+            console.log(`❌ [${signal.symbol}] ${reason}`);
+            return { isValid: false, reason };
+          }
+
+          console.log(
+            `✅ [${signal.symbol}] 사용자 정의 매도 조건 통과: 수익률 ${profitRate.toFixed(2)}%`
+          );
+        }
+      }
     }
 
+    console.log(`✅ [${signal.symbol}] 신호 검증 완료`);
     return { isValid: true };
   }
 
@@ -940,69 +1160,126 @@ class PaperTradingEngine {
     }
 
     const profitRate = ((price - coin.avgPrice) / coin.avgPrice) * 100;
+    const savedSettings = this.getTradingSettings();
+    const sellConditions = savedSettings?.tradingConditions?.sellConditions;
+
+    console.log(`🔍 [${symbol}] 매도 조건 평가 시작:`, {
+      profitRate: profitRate.toFixed(2) + "%",
+      price: price.toLocaleString(),
+      avgPrice: coin.avgPrice.toLocaleString(),
+      sellConditions: sellConditions,
+    });
+
     let sellRatio = 0;
     let sellReason = "";
 
-    if (this.isTestMode) {
-      if (profitRate >= 10) {
+    // 🔥 ENHANCED: 사용자 정의 매도 조건 우선 적용
+    if (sellConditions) {
+      console.log(`🎯 [${symbol}] 사용자 정의 매도 조건 적용`);
+
+      if (profitRate >= sellConditions.profitTarget3) {
         sellRatio = 1.0;
-        sellReason = "10% 목표 달성 (테스트)";
-      } else if (profitRate >= 6) {
+        sellReason = `최종 수익목표 달성 (${sellConditions.profitTarget3}%)`;
+      } else if (profitRate >= sellConditions.profitTarget2) {
         sellRatio = 0.5;
-        sellReason = "6% 부분 수익실현 (테스트)";
-      } else if (profitRate >= 4) {
+        sellReason = `2차 수익실현 (${sellConditions.profitTarget2}%)`;
+      } else if (profitRate >= sellConditions.profitTarget1) {
         sellRatio = 0.3;
-        sellReason = "4% 1차 수익실현 (테스트)";
-      } else if (profitRate >= 2.5) {
-        sellRatio = 0.2;
-        sellReason = "2.5% 초기 수익실현 (테스트)";
-      } else if (profitRate <= -4) {
+        sellReason = `1차 수익실현 (${sellConditions.profitTarget1}%)`;
+      } else if (profitRate <= sellConditions.stopLoss) {
         sellRatio = 1.0;
-        sellReason = "테스트 손절매 (-4%)";
-      } else if (profitRate <= -2) {
-        sellRatio = 0.5;
-        sellReason = "테스트 부분 손절 (-2%)";
+        sellReason = `손절매 실행 (${sellConditions.stopLoss}%)`;
       } else {
-        return { executed: false, reason: "테스트 모드 매도 조건 불만족" };
+        console.log(
+          `❌ [${symbol}] 사용자 정의 매도 조건 불만족: 수익률 ${profitRate.toFixed(2)}%`
+        );
+        return { executed: false, reason: "사용자 정의 매도 조건 불만족" };
       }
+
+      console.log(
+        `✅ [${symbol}] 사용자 정의 매도 조건 적용: ${sellReason} (${(sellRatio * 100).toFixed(0)}% 매도)`
+      );
     } else {
-      if (profitRate >= 12) {
-        sellRatio = 1.0;
-        sellReason = "12% 목표 달성";
-      } else if (profitRate >= 8) {
-        sellRatio = 0.5;
-        sellReason = "8% 1차 수익실현";
-      } else if (profitRate >= 5) {
-        sellRatio = 0.3;
-        sellReason = "5% 부분 수익실현";
-      } else if (profitRate >= 3) {
-        sellRatio = 0.2;
-        sellReason = "3% 초기 수익실현";
-      } else if (profitRate <= -6) {
-        sellRatio = 1.0;
-        sellReason = "실전 손절매 (-6%)";
-      } else if (profitRate <= -3) {
-        sellRatio = 0.5;
-        sellReason = "실전 부분 손절 (-3%)";
+      console.log(`🔍 [${symbol}] 기본 매도 조건 적용`);
+
+      // 🔥 기존 테스트/실전 모드별 조건 (하위호환성)
+      if (this.isTestMode) {
+        if (profitRate >= 10) {
+          sellRatio = 1.0;
+          sellReason = "10% 목표 달성 (테스트)";
+        } else if (profitRate >= 6) {
+          sellRatio = 0.5;
+          sellReason = "6% 부분 수익실현 (테스트)";
+        } else if (profitRate >= 4) {
+          sellRatio = 0.3;
+          sellReason = "4% 1차 수익실현 (테스트)";
+        } else if (profitRate >= 2.5) {
+          sellRatio = 0.2;
+          sellReason = "2.5% 초기 수익실현 (테스트)";
+        } else if (profitRate <= -4) {
+          sellRatio = 1.0;
+          sellReason = "테스트 손절매 (-4%)";
+        } else if (profitRate <= -2) {
+          sellRatio = 0.5;
+          sellReason = "테스트 부분 손절 (-2%)";
+        } else {
+          console.log(
+            `❌ [${symbol}] 테스트 모드 매도 조건 불만족: 수익률 ${profitRate.toFixed(2)}%`
+          );
+          return { executed: false, reason: "테스트 모드 매도 조건 불만족" };
+        }
       } else {
-        return { executed: false, reason: "실전 모드 매도 조건 불만족" };
+        if (profitRate >= 12) {
+          sellRatio = 1.0;
+          sellReason = "12% 목표 달성";
+        } else if (profitRate >= 8) {
+          sellRatio = 0.5;
+          sellReason = "8% 1차 수익실현";
+        } else if (profitRate >= 5) {
+          sellRatio = 0.3;
+          sellReason = "5% 부분 수익실현";
+        } else if (profitRate >= 3) {
+          sellRatio = 0.2;
+          sellReason = "3% 초기 수익실현";
+        } else if (profitRate <= -6) {
+          sellRatio = 1.0;
+          sellReason = "실전 손절매 (-6%)";
+        } else if (profitRate <= -3) {
+          sellRatio = 0.5;
+          sellReason = "실전 부분 손절 (-3%)";
+        } else {
+          console.log(
+            `❌ [${symbol}] 실전 모드 매도 조건 불만족: 수익률 ${profitRate.toFixed(2)}%`
+          );
+          return { executed: false, reason: "실전 모드 매도 조건 불만족" };
+        }
       }
     }
 
+    // 매도 실행
     const sellQuantity = coin.quantity * sellRatio;
     const sellAmount = sellQuantity * price;
     const fee = sellAmount * 0.0005;
 
+    console.log(`💰 [${symbol}] 매도 실행:`, {
+      sellQuantity: sellQuantity.toFixed(8),
+      sellAmount: sellAmount.toLocaleString(),
+      fee: fee.toLocaleString(),
+      sellRatio: (sellRatio * 100).toFixed(1) + "%",
+    });
+
+    // 포지션 업데이트
     coin.quantity -= sellQuantity;
     coin.currentPrice = price;
 
     if (coin.quantity < 0.00000001) {
       this.portfolio.coins.delete(symbol);
-      this.log(`🗑️ ${symbol} 포지션 완전 청산`);
+      console.log(`🗑️ [${symbol}] 포지션 완전 청산`);
     }
 
     this.portfolio.krw += sellAmount - fee;
 
+    // 거래 기록
     const trade = {
       id: `${Date.now()}_${symbol}`,
       symbol,
@@ -1027,6 +1304,7 @@ class PaperTradingEngine {
     this.log(
       `✅ ${this.isTestMode ? "테스트" : "실전"} 매도: ${sellReason} - ${symbol} ${sellQuantity.toFixed(8)}개 @ ₩${price.toLocaleString()} (수익률: ${profitRate.toFixed(2)}%)`
     );
+
     return { executed: true, trade };
   }
 
@@ -1045,6 +1323,39 @@ class PaperTradingEngine {
       coin.currentPrice = price;
       coin.profitRate = ((price - coin.avgPrice) / coin.avgPrice) * 100;
     }
+  }
+
+  // 🔥 NEW: 설정 업데이트 함수 추가
+  updateSettings(newSettings) {
+    if (!newSettings) {
+      console.warn("⚠️ updateSettings: 설정이 null 또는 undefined");
+      return;
+    }
+
+    console.log("🔧 PaperTradingEngine 설정 업데이트:", newSettings);
+
+    // tradingConditions 업데이트
+    if (newSettings.tradingConditions) {
+      console.log("📋 거래 조건 업데이트:", newSettings.tradingConditions);
+
+      // 글로벌 설정으로 저장 (window 객체 사용)
+      if (typeof window !== "undefined") {
+        window.currentTradingSettings = newSettings;
+        console.log("🌐 Window에 설정 저장 완료");
+      }
+    }
+
+    // 동적 포지션 관리 설정 업데이트
+    if (newSettings.dynamicPosition !== undefined) {
+      this.setDynamicPositionEnabled(newSettings.dynamicPosition.enabled);
+    }
+
+    // 테스트 모드 설정 업데이트
+    if (newSettings.testMode !== undefined) {
+      this.setTestMode(newSettings.testMode);
+    }
+
+    this.log(`✅ PaperTradingEngine 설정 업데이트 완료`);
   }
 
   getCoinTier(symbol) {
@@ -1266,6 +1577,7 @@ class PaperTradingEngine {
       isActive: this.isActive,
       dynamicPositionEnabled: this.dynamicPositionEnabled,
       marketCondition: this.currentMarketCondition,
+      marketRiskLevel: this.marketRiskLevel,
     };
   }
 
