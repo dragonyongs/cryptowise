@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { usePortfolioConfig } from '../config/portfolioConfig';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuthStore } from '../stores/authStore';
@@ -50,11 +51,13 @@ export default function Dashboard() {
     const navigate = useNavigate();
     const [loading, setLoading] = useState(true);
 
-    // ✅ 포트폴리오 데이터를 선택된 코인 기반으로 실시간 계산
+    // ✅ 중앙화된 자본금 사용
+    const { config } = usePortfolioConfig();
+    const baseCash = config?.initialCapital || 0;
     const portfolioData = useMemo(() => {
         if (selectedCoins.length === 0) {
             return {
-                totalPortfolioValue: 0,
+                totalPortfolioValue: baseCash,
                 totalReturn: 0,
                 dailyChange: 0,
                 activeStrategies: 0,
@@ -65,7 +68,6 @@ export default function Dashboard() {
         }
 
         // 실제 선택된 코인들을 기반으로 포트폴리오 계산
-        const baseCash = 10000000; // 기본 현금 1000만원
         const totalCoinValue = selectedCoins.reduce((sum, coin) => {
             // 가상의 보유량 (현재가의 0.1% 정도)
             const virtualHolding = (baseCash * 0.1) / selectedCoins.length / coin.current_price;
@@ -98,7 +100,7 @@ export default function Dashboard() {
             winRate: Math.min(95, 60 + (selectedCoins.length * 2)), // 코인 수에 따라 승률 증가
             topPerformer
         };
-    }, [selectedCoins]);
+    }, [selectedCoins, baseCash]);
 
     // 최근 활동 목업 데이터 (선택된 코인 기반)
     const recentActivities = useMemo(() => {

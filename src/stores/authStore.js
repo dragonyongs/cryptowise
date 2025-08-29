@@ -1,3 +1,4 @@
+// src/stores/authStore.js
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 
@@ -7,14 +8,12 @@ export const useAuthStore = create(
       user: null,
       loading: false,
 
-      // 구글 로그인 시뮬레이션
+      // 구글 로그인 시뮬레이션 (실서비스는 NextAuth 연동)
       signIn: async () => {
         set({ loading: true });
-
-        // 실제로는 NextAuth Google Provider 연동
         try {
+          // API/OAuth 대기 시뮬레이션
           await new Promise((resolve) => setTimeout(resolve, 2000));
-
           set({
             user: {
               id: "user_advanced_001",
@@ -41,7 +40,11 @@ export const useAuthStore = create(
 
       signOut: () => {
         set({ user: null });
-        localStorage.clear();
+        try {
+          localStorage.clear();
+        } catch {
+          // noop
+        }
       },
 
       updatePreferences: (preferences) => {
@@ -55,11 +58,23 @@ export const useAuthStore = create(
           });
         }
       },
+
+      // 파생 상태(선택): 함수 형태로 제공해 최신 상태 참조
+      isAuthenticated: () => !!get().user,
+
+      // 유틸(선택)
+      reset: () => set({ user: null, loading: false }),
     }),
     {
       name: "cryptowise-auth",
       storage: createJSONStorage(() => localStorage),
+      // user만 저장해 민감도/크기 최소화
       partialize: (state) => ({ user: state.user }),
+      version: 1,
+      migrate: (persistedState, version) => {
+        // 버전업 시 마이그레이션 훅 (현재는 패스)
+        return persistedState;
+      },
     }
   )
 );

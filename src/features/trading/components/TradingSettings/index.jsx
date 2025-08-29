@@ -25,9 +25,12 @@ import {
 } from "lucide-react";
 import { CheckCircleIcon } from '@heroicons/react/24/outline';
 
+import { useCapital } from "../../../../hooks/useCapital"; // 새로운 훅 사용
+
 // 🔥 개선된 훅 사용
 import { useTradingSettings } from "../../hooks/useTradingSettings";
 import { usePortfolioStore } from "../../../../stores/portfolioStore";
+import { usePortfolioConfig } from "../../../../config/portfolioConfig";
 import { TRADING_DEFAULTS } from "../../constants/tradingDefaults";
 
 // 컴포넌트 import (기존 유지)
@@ -85,6 +88,20 @@ const TradingSettings = ({ isActive = false, onClose }) => {
   const [activeTab, setActiveTab] = useState("portfolio");
   const [showSuccess, setShowSuccess] = useState(false);
   const [errors, setErrors] = useState({});
+
+  const { config, setInitialCapital } = usePortfolioConfig();
+
+  // 🔥 중앙화된 자본금 관리 사용
+  const {
+    capital,
+    updateCapital,
+    formatCapital,
+    isLoading: capitalLoading,
+    error: capitalError,
+  } = useCapital();
+
+  const [capitalInput, setCapitalInput] = useState("");
+  const [capitalDirty, setCapitalDirty] = useState(false);
 
   // 🔥 개선된 훅 사용 (모든 기존 기능 + 새 기능)
   const {
@@ -150,17 +167,48 @@ const TradingSettings = ({ isActive = false, onClose }) => {
     return settings.tradingConditions?.sellConditions || {};
   }, [settings.tradingConditions?.sellConditions]);
 
-  // 🔥 실제 저장 핸들러 (기존 시뮬레이션에서 실제 저장으로 변경)
+
+  // 🔥 자본금 저장 핸들러 (간소화됨)
+  const handleCapitalSave = useCallback(async () => {
+    if (!capitalDirty || !capitalInput) return;
+
+    const amount = parseInt(capitalInput.replace(/[^0-9]/g, ""), 10);
+    if (isNaN(amount) || amount <= 0) {
+      setErrors({ capital: "유효한 자본금을 입력하세요." });
+      return;
+    }
+
+    const success = updateCapital(amount, "trading_settings");
+    if (success) {
+      setCapitalInput("");
+      setCapitalDirty(false);
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+
+      if (window.addLog) {
+        window.addLog(`💰 자본금이 ${formatCapital(amount)}원으로 변경되었습니다`, "success");
+      }
+    } else {
+      setErrors({ capital: "자본금 업데이트 실패" });
+    }
+  }, [capitalInput, capitalDirty, updateCapital, formatCapital]);
+
+  // 🔥 통합된 저장 핸들러
   const handleSave = useCallback(async () => {
     setErrors({});
+
     try {
+      // 1. 자본금 저장
+      await handleCapitalSave();
+
+      // 2. 트레이딩 설정 저장
       const result = await saveSettings();
+
       if (result.success) {
         setShowSuccess(true);
         setTimeout(() => setShowSuccess(false), 3000);
-        // 성공 알림
         if (window.addLog) {
-          window.addLog("✅ 트레이딩 설정이 성공적으로 저장되었습니다", "success");
+          window.addLog("✅ 모든 설정이 성공적으로 저장되었습니다", "success");
         }
       } else {
         setErrors({ general: `저장 실패: ${result.error}` });
@@ -169,7 +217,44 @@ const TradingSettings = ({ isActive = false, onClose }) => {
       console.error("Save failed:", error);
       setErrors({ general: `저장 중 오류: ${error.message}` });
     }
-  }, [saveSettings]);
+  }, [handleCapitalSave, saveSettings]);
+
+  // 🔥 실제 저장 핸들러 (자본금 입력도 dirty로 반영)
+  // const handleSave = useCallback(async () => {
+  //   setErrors({});
+  //   try {
+  //     let capitalChanged = false;
+  //     if (capitalDirty && capitalInput) {
+  //       const amount = parseInt(capitalInput.replace(/[^0-9]/g, ""), 10);
+  //       if (!isNaN(amount) && amount > 0) {
+  //         setInitialCapital(amount);
+  //         capitalChanged = true;
+  //         if (window.addLog) window.addLog(`💰 자본금이 ${amount.toLocaleString()}원으로 변경되었습니다`, "info");
+  //       } else {
+  //         setErrors({ general: "유효한 자본금을 입력하세요." });
+  //         return;
+  //       }
+  //     }
+  //     const result = await saveSettings();
+  //     if (result.success) {
+  //       setShowSuccess(true);
+  //       setTimeout(() => setShowSuccess(false), 3000);
+  //       if (window.addLog) {
+  //         window.addLog("✅ 트레이딩 설정이 성공적으로 저장되었습니다", "success");
+  //       }
+  //       setCapitalDirty(false);
+  //       // 저장 후 입력란 동기화
+  //       if (capitalChanged) {
+  //         setCapitalInput("");
+  //       }
+  //     } else {
+  //       setErrors({ general: `저장 실패: ${result.error}` });
+  //     }
+  //   } catch (error) {
+  //     console.error("Save failed:", error);
+  //     setErrors({ general: `저장 중 오류: ${error.message}` });
+  //   }
+  // }, [saveSettings, capitalInput, capitalDirty, setInitialCapital]);
 
   // 🔥 초기화 핸들러 (기존 로직 개선)
   const handleReset = useCallback(() => {
@@ -262,11 +347,11 @@ const TradingSettings = ({ isActive = false, onClose }) => {
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 w-full">
             <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded-lg">
               <CogIcon className="w-6 h-6 text-blue-600 dark:text-blue-400" />
             </div>
-            <div>
+            <div className="flex-1">
               <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
                 트레이딩 설정
               </h2>
@@ -275,6 +360,25 @@ const TradingSettings = ({ isActive = false, onClose }) => {
                 {isDirty && " 변경사항을 적용하려면 저장 버튼을 클릭하세요."}
                 {isActive && " 활성 거래 중에는 일부 설정이 다음 거래부터 적용됩니다."}
               </p>
+            </div>
+            {/* 자본금 입력 필드 */}
+            <div className="flex flex-col items-end min-w-[180px] ml-4">
+              <label htmlFor="capital-input" className="text-xs text-gray-500 dark:text-gray-400 mb-1">자본금(원)</label>
+              <input
+                id="capital-input"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                className="w-36 px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-right font-semibold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                value={capitalDirty ? capitalInput : (config?.initialCapital?.toLocaleString() || "")}
+                onChange={e => {
+                  setCapitalInput(e.target.value.replace(/[^0-9]/g, ""));
+                  setCapitalDirty(true);
+                }}
+                placeholder="예: 3,000,000"
+                autoComplete="off"
+              />
+              <span className="text-xs text-gray-400 mt-1">현재: {config?.initialCapital?.toLocaleString() || "-"}원</span>
             </div>
           </div>
 
@@ -288,10 +392,11 @@ const TradingSettings = ({ isActive = false, onClose }) => {
             )}
 
             {/* 저장 버튼 */}
+            {/* 자본금 입력 또는 설정 변경 시 저장 활성화 */}
             <button
               onClick={handleSave}
-              disabled={isLoading || !isDirty}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isDirty && !isLoading
+              disabled={isLoading || !(isDirty || capitalDirty)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${(isDirty || capitalDirty) && !isLoading
                 ? "bg-blue-600 hover:bg-blue-700 text-white"
                 : "bg-gray-100 dark:bg-gray-700 text-gray-400 cursor-not-allowed"
                 }`}

@@ -1,6 +1,7 @@
 // src/features/trading/hooks/useTradingSettings.js
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { usePortfolioStore } from "../../../stores/portfolioStore";
+import { usePortfolioConfig } from "../../../config/portfolioConfig";
 import { useTradingStore } from "../../../stores/tradingStore";
 import { normalizeSettings } from "../utils/settingsNormalizer";
 import { adjustOtherAllocations } from "../utils/portfolioCalculations";
@@ -222,8 +223,9 @@ export const useTradingSettings = (initialSettings = {}) => {
   );
 
   // 현재 포트폴리오 총액 기반 할당 금액 계산
+  const { config } = usePortfolioConfig();
   const allocationAmounts = useMemo(() => {
-    const totalValue = portfolioData?.totalValue || 1840000;
+    const totalValue = portfolioData?.totalValue || config?.initialCapital || 0;
     return {
       cash: totalValue * settings.allocation.cash,
       t1: totalValue * settings.allocation.t1,
@@ -231,7 +233,7 @@ export const useTradingSettings = (initialSettings = {}) => {
       t3: totalValue * settings.allocation.t3,
       total: totalValue,
     };
-  }, [settings.allocation, portfolioData]);
+  }, [settings.allocation, portfolioData, config?.initialCapital]);
 
   // 지표 업데이트
   const updateIndicator = useCallback(

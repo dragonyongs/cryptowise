@@ -1,6 +1,7 @@
 // src/features/trading/hooks/usePaperTrading.js - 함수 순서 수정 버전
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useCapital, useCapitalSubscription } from "../../../hooks/useCapital";
 
 // ✅ Store 연결
 import { usePortfolioStore } from "../../../stores/portfolioStore.js";
@@ -36,6 +37,26 @@ export const usePaperTrading = (
   userId = "demo-user",
   externalSettings = null
 ) => {
+  // 🔥 중앙화된 자본금 사용
+  const {
+    capital,
+    updateCapital,
+    isInitialized: capitalInitialized,
+  } = useCapital();
+
+  // 로깅 시스템
+  const {
+    logs,
+    monitoringStats,
+    addLog,
+    updateStats,
+    resetStats,
+    getLogSystemStatus,
+    exportLogs,
+    getFilteredLogs,
+    performance,
+  } = useTradingLogger();
+
   // 🔥 마운트 상태 추적
   const mountedRef = useRef(true);
   const initializationRef = useRef(false);
@@ -52,6 +73,30 @@ export const usePaperTrading = (
     externalSettings?.initialCapital || null
   );
   const { initialCapital } = usePortfolioConfig(customCapital);
+
+  // 🔥 페이퍼 트레이딩 엔진 초기 설정 (중앙화된 자본금 사용)
+  useEffect(() => {
+    if (mountedRef.current && capitalInitialized && capital > 0) {
+      paperTradingEngine.resetPortfolio(capital);
+      addLog(
+        `🎯 페이퍼 트레이딩 엔진 자본금 설정: ${capital.toLocaleString()}원`,
+        "info"
+      );
+    }
+  }, [capital, capitalInitialized, addLog]);
+
+  // 자본금 변경 이벤트 구독: 설정에서 자본금이 바뀌면 customCapital도 동기화
+  useEffect(() => {
+    const handler = (e) => {
+      const newAmount = e?.detail?.amount;
+      if (newAmount && newAmount > 0) {
+        setCustomCapital(newAmount);
+      }
+    };
+    window.addEventListener("portfolio-capital-updated", handler);
+    return () =>
+      window.removeEventListener("portfolio-capital-updated", handler);
+  }, []);
 
   // ✅ 초기화 상태
   const [isStoreInitialized, setIsStoreInitialized] = useState(false);
@@ -107,6 +152,36 @@ export const usePaperTrading = (
   const topCoinsUpdateIntervalRef = useRef(null);
   const optimizationIntervalRef = useRef(null);
 
+  const {
+    portfolio,
+    updatePortfolio: syncPortfolio,
+    isLoading,
+  } = usePortfolioManager(marketData, addLog);
+
+  const { updatePortfolio } = usePortfolioSync(
+    syncPortfolio,
+    addLog,
+    updatePortfolioStore
+  );
+
+  // 🔥 자본금 변경 감지 및 동기화 (usePortfolioSync 이후로 이동)
+  useCapitalSubscription(
+    useCallback(
+      (newCapital, oldCapital) => {
+        if (newCapital !== oldCapital && paperTradingEngine) {
+          paperTradingEngine.resetPortfolio(newCapital);
+          addLog(`💰 자본금 변경: ${newCapital.toLocaleString()}원`, "info");
+
+          // 포트폴리오 업데이트
+          setTimeout(() => {
+            updatePortfolio(true);
+          }, 1000);
+        }
+      },
+      [addLog, updatePortfolio]
+    )
+  );
+
   // 🔥 시스템 준비 상태
   const systemReady = useMemo(() => {
     return (
@@ -143,25 +218,6 @@ export const usePaperTrading = (
       paperTradingEngine.resetPortfolio(initialCapital);
     }
   }, [initialCapital]);
-
-  // ✅ 로거 및 관련 훅들
-  const {
-    logs,
-    monitoringStats,
-    addLog,
-    updateStats,
-    resetStats,
-    getLogSystemStatus,
-    exportLogs,
-    getFilteredLogs,
-    performance,
-  } = useTradingLogger();
-
-  const {
-    portfolio,
-    updatePortfolio: syncPortfolio,
-    isLoading,
-  } = usePortfolioManager(marketData, addLog);
 
   const { marketSentiment, sentimentLoading, fetchMarketSentiment } =
     useMarketSentiment(addLog, isActive);
@@ -285,12 +341,6 @@ export const usePaperTrading = (
     cleanup: cleanupConnection,
     initializeConnection,
   } = useConnectionManager(addLog, updateStats);
-
-  const { updatePortfolio } = usePortfolioSync(
-    syncPortfolio,
-    addLog,
-    updatePortfolioStore
-  );
 
   // 🔥 리소스 정리
   const cleanupAllResources = useCallback(() => {
@@ -981,24 +1031,159 @@ export const usePaperTrading = (
           volumeRatio: signal.volumeRatio || signal.technicalData?.volumeRatio,
         };
 
-        // 🔥 ENHANCED: 설정 기반 신호 검증 미리 확인
+        // ✅ 조건별 비교값/결과/최종 사유 요약 로그 (BUY/SELL 모두)
         const buyConditions =
           tradingSettingsRef.current?.tradingConditions?.buyConditions;
+        const sellConditions =
+          tradingSettingsRef.current?.tradingConditions?.sellConditions;
         if (signal.type === "BUY" && buyConditions) {
-          console.log("🔍 매수 조건 사전 검증:", {
-            신호점수: enhancedSignal.totalScore,
-            최소점수: buyConditions.minBuyScore,
-            가격변화: enhancedSignal.priceChangePercent + "%",
-            하락임계값: buyConditions.priceDropThreshold + "%",
-            RSI: enhancedSignal.rsi,
-            RSI임계값: buyConditions.rsiOversold,
-          });
-
-          // 사전 검증으로 불필요한 처리 방지
+          const buyCheckResults = [];
+          // minBuyScore
           if (enhancedSignal.totalScore < buyConditions.minBuyScore) {
+            buyCheckResults.push(
+              `minBuyScore(${enhancedSignal.totalScore} < ${buyConditions.minBuyScore}) → 실패`
+            );
+          } else {
+            buyCheckResults.push(
+              `minBuyScore(${enhancedSignal.totalScore} ≥ ${buyConditions.minBuyScore}) → 통과`
+            );
+          }
+          // priceDropThreshold
+          if (
+            typeof buyConditions.priceDropThreshold === "number" &&
+            typeof enhancedSignal.priceChangePercent === "number"
+          ) {
+            if (
+              enhancedSignal.priceChangePercent <
+              buyConditions.priceDropThreshold
+            ) {
+              buyCheckResults.push(
+                `priceDrop(${enhancedSignal.priceChangePercent}% < ${buyConditions.priceDropThreshold}%) → 통과`
+              );
+            } else {
+              buyCheckResults.push(
+                `priceDrop(${enhancedSignal.priceChangePercent}% ≥ ${buyConditions.priceDropThreshold}%) → 실패`
+              );
+            }
+          }
+          // rsiOversold
+          if (
+            typeof buyConditions.rsiOversold === "number" &&
+            typeof enhancedSignal.rsi === "number"
+          ) {
+            if (enhancedSignal.rsi < buyConditions.rsiOversold) {
+              buyCheckResults.push(
+                `RSI(${enhancedSignal.rsi} < ${buyConditions.rsiOversold}) → 통과`
+              );
+            } else {
+              buyCheckResults.push(
+                `RSI(${enhancedSignal.rsi} ≥ ${buyConditions.rsiOversold}) → 실패`
+              );
+            }
+          }
+          // 기타 조건 추가 가능
+          let finalReason = "";
+          if (buyCheckResults.some((r) => r.includes("실패"))) {
+            finalReason = "최종: 조건 미충족으로 미진입";
+          } else {
+            finalReason = "최종: 모든 조건 통과";
+          }
+          // 무조건 로그 출력 (실패/통과 모두)
+          addLog(
+            `${buyCheckResults.some((r) => r.includes("실패")) ? "🟠" : "🟢"} [${signal.symbol}] ${buyCheckResults.join(", ")} | ${finalReason}`,
+            "info"
+          );
+          if (buyCheckResults.some((r) => r.includes("실패"))) {
+            return false;
+          }
+        }
+        if (signal.type === "SELL" && sellConditions) {
+          const sellCheckResults = [];
+          // profitTarget1/2/3 (익절)
+          if (
+            typeof sellConditions.profitTarget1 === "number" &&
+            typeof enhancedSignal.profitPercent === "number"
+          ) {
+            if (enhancedSignal.profitPercent >= sellConditions.profitTarget3) {
+              sellCheckResults.push(
+                `익절3(${enhancedSignal.profitPercent}% ≥ ${sellConditions.profitTarget3}%) → 통과`
+              );
+            } else if (
+              enhancedSignal.profitPercent >= sellConditions.profitTarget2
+            ) {
+              sellCheckResults.push(
+                `익절2(${enhancedSignal.profitPercent}% ≥ ${sellConditions.profitTarget2}%) → 통과`
+              );
+            } else if (
+              enhancedSignal.profitPercent >= sellConditions.profitTarget1
+            ) {
+              sellCheckResults.push(
+                `익절1(${enhancedSignal.profitPercent}% ≥ ${sellConditions.profitTarget1}%) → 통과`
+              );
+            } else {
+              sellCheckResults.push(
+                `익절(${enhancedSignal.profitPercent}% < ${sellConditions.profitTarget1}%) → 실패`
+              );
+            }
+          }
+          // stopLoss (손절)
+          if (
+            typeof sellConditions.stopLoss === "number" &&
+            typeof enhancedSignal.profitPercent === "number"
+          ) {
+            if (enhancedSignal.profitPercent <= sellConditions.stopLoss) {
+              sellCheckResults.push(
+                `손절(${enhancedSignal.profitPercent}% ≤ ${sellConditions.stopLoss}%) → 통과`
+              );
+            } else {
+              sellCheckResults.push(
+                `손절(${enhancedSignal.profitPercent}% > ${sellConditions.stopLoss}%) → 실패`
+              );
+            }
+          }
+          // rsiOverbought
+          if (
+            typeof sellConditions.rsiOverbought === "number" &&
+            typeof enhancedSignal.rsi === "number"
+          ) {
+            if (enhancedSignal.rsi > sellConditions.rsiOverbought) {
+              sellCheckResults.push(
+                `RSI(${enhancedSignal.rsi} > ${sellConditions.rsiOverbought}) → 통과`
+              );
+            } else {
+              sellCheckResults.push(
+                `RSI(${enhancedSignal.rsi} ≤ ${sellConditions.rsiOverbought}) → 실패`
+              );
+            }
+          }
+          // timeBasedExit (보유기간)
+          if (
+            typeof sellConditions.timeBasedExit === "number" &&
+            typeof enhancedSignal.holdDays === "number"
+          ) {
+            if (enhancedSignal.holdDays >= sellConditions.timeBasedExit) {
+              sellCheckResults.push(
+                `보유기간(${enhancedSignal.holdDays}일 ≥ ${sellConditions.timeBasedExit}일) → 통과`
+              );
+            } else {
+              sellCheckResults.push(
+                `보유기간(${enhancedSignal.holdDays}일 < ${sellConditions.timeBasedExit}일) → 실패`
+              );
+            }
+          }
+          // 기타 조건 추가 가능
+          let finalReason = "";
+          if (sellCheckResults.some((r) => r.includes("통과"))) {
+            finalReason = "최종: 매도 조건 충족, 매도 신호";
             addLog(
-              `⚠️ [${signal.symbol}] 사전 검증 실패: 점수 부족 ${enhancedSignal.totalScore} < ${buyConditions.minBuyScore}`,
-              "warning"
+              `� [${signal.symbol}] ${sellCheckResults.join(", ")} | ${finalReason}`,
+              "info"
+            );
+          } else {
+            finalReason = "최종: 매도 조건 미충족, 미매도";
+            addLog(
+              `⚪ [${signal.symbol}] ${sellCheckResults.join(", ")} | ${finalReason}`,
+              "info"
             );
             return false;
           }
@@ -1170,12 +1355,14 @@ export const usePaperTrading = (
             signalOptions
           );
 
-          console.log(
-            `🎯 생성된 신호 (${signalOptions.strategy}):`,
-            newSignals.length
+          // 신호 개수와 심볼을 info 레벨로 무조건 로그
+          addLog(
+            `🧩 신호 생성 결과: ${newSignals.length}개 [${newSignals.map((s) => s.symbol).join(", ")}]`,
+            "info"
           );
 
           if (newSignals.length === 0) {
+            addLog("⚪ 신호 없음: 모든 조건 미충족 또는 데이터 부족", "info");
             // 🔥 RSI 기반 백업 신호 (시장 상황 관계없이)
             addLog("📊 기본 RSI 조건으로 재시도", "info");
             const rsiSignals = await generateSignalsFromCachedData(
@@ -1189,11 +1376,18 @@ export const usePaperTrading = (
               }
             );
 
+            addLog(
+              `🧩 RSI 백업 신호 결과: ${rsiSignals.length}개 [${rsiSignals.map((s) => s.symbol).join(", ")}]`,
+              "info"
+            );
+
             if (rsiSignals.length > 0) {
               addLog(`🔥 RSI 백업 신호: ${rsiSignals.length}개`, "success");
               for (const signal of rsiSignals) {
                 await processSignalForTrading(signal);
               }
+            } else {
+              addLog("⚪ RSI 백업 신호도 없음", "info");
             }
           } else {
             for (const signal of newSignals) {

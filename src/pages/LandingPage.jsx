@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { useAuthStore } from "../stores/authStore"; // 기존 auth store 사용
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useNavigate, Navigate } from "react-router-dom";
+import { shallow } from "zustand/shallow";
+import { useAuthStore } from "../stores/authStore";
+
 import {
   ChartBarIcon,
   CpuChipIcon,
@@ -14,7 +16,14 @@ import {
 
 export default function LandingPage() {
   const navigate = useNavigate();
-  const { user, signIn, loading: authLoading } = useAuthStore();
+
+  // 최소 구독으로 리렌더링 절감
+  const { user, loading: authLoading, signIn } = useAuthStore(
+    (s) => ({ user: s.user, loading: s.loading, signIn: s.signIn }),
+    shallow
+  );
+  const isAuthenticated = !!user;
+
   const [loading, setLoading] = useState(false);
   const [activeFeature, setActiveFeature] = useState(0);
   const [marketData, setMarketData] = useState({
@@ -22,95 +31,115 @@ export default function LandingPage() {
     eth: 3456.78,
     trend: "+2.3%",
   });
+  const [error, setError] = useState(null);
 
-  // 이미 로그인된 경우 자동 리다이렉트
+  const isMountedRef = useRef(true);
   useEffect(() => {
-    if (user) {
-      navigate("/dashboard");
-    }
-  }, [user, navigate]);
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  // 고정 데이터는 useMemo로 메모이제이션
+  const features = useMemo(
+    () => [
+      {
+        title: "다차원 분석",
+        description: "기술적 지표, 펀더멘탈, 감정 분석을 통한 종합적 투자 판단",
+        icon: LightBulbIcon,
+        stats: "95% 정확도",
+      },
+      {
+        title: "개별 전략",
+        description: "코인별로 단타/스윙/장기보유 전략을 다르게 설정",
+        icon: CpuChipIcon,
+        stats: "127개 코인",
+      },
+      {
+        title: "백테스팅",
+        description: "과거 데이터로 전략을 검증하고 최적화",
+        icon: ChartBarIcon,
+        stats: "3년간 데이터",
+      },
+      {
+        title: "리스크 관리",
+        description: "안전성을 최우선으로 하는 투자 시스템",
+        icon: ShieldCheckIcon,
+        stats: "0.1% 최대손실",
+      },
+    ],
+    []
+  );
+
+  const benefits = useMemo(
+    () => [
+      "실시간 분석",
+      "24/7 자동 모니터링",
+      "리스크 관리 시스템",
+      "백테스팅 지원",
+      "모바일 알림",
+      "전문가 지원",
+    ],
+    []
+  );
 
   // 실시간 데이터 시뮬레이션
   useEffect(() => {
     const interval = setInterval(() => {
-      setMarketData((prev) => ({
-        btc: prev.btc + (Math.random() - 0.5) * 100,
-        eth: prev.eth + (Math.random() - 0.5) * 50,
-        trend:
+      setMarketData((prev) => {
+        if (!isMountedRef.current) return prev;
+        const nextBtc = prev.btc + (Math.random() - 0.5) * 100;
+        const nextEth = prev.eth + (Math.random() - 0.5) * 50;
+        const nextTrend =
           Math.random() > 0.5
             ? "+" + (Math.random() * 5).toFixed(1) + "%"
-            : "-" + (Math.random() * 2).toFixed(1) + "%",
-      }));
+            : "-" + (Math.random() * 2).toFixed(1) + "%";
+        return { btc: nextBtc, eth: nextEth, trend: nextTrend };
+      });
     }, 3000);
     return () => clearInterval(interval);
   }, []);
 
-  // 기능 자동 전환
+  // 기능 탭 자동 전환
   useEffect(() => {
     const interval = setInterval(() => {
       setActiveFeature((prev) => (prev + 1) % features.length);
     }, 4000);
     return () => clearInterval(interval);
-  }, []);
+  }, [features.length]);
 
-  // 로그인 처리 함수
-  const handleSignIn = async () => {
+  // 로그인 핸들러: setState 안전장치 포함
+  const handleSignIn = useCallback(async () => {
+    if (loading || authLoading) return;
     try {
+      setError(null);
       setLoading(true);
-
-      // 테스트용: useAuthStore의 signIn이 있으면 사용, 없으면 시뮬레이션
-      if (signIn && typeof signIn === "function") {
-        await signIn();
-      } else {
-        // 테스트용 로그인 시뮬레이션
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        // 시뮬레이션 후 직접 리다이렉트
-        navigate("/dashboard");
+      await signIn?.();
+    } catch (e) {
+      if (isMountedRef.current) {
+        setError(e?.message || "로그인 중 오류가 발생했습니다.");
       }
-    } catch (error) {
-      console.error("로그인 실패:", error);
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [loading, authLoading, signIn]);
 
-  const features = [
-    {
-      title: "다차원 분석",
-      description: "기술적 지표, 펀더멘탈, 감정 분석을 통한 종합적 투자 판단",
-      icon: LightBulbIcon,
-      stats: "95% 정확도",
-    },
-    {
-      title: "개별 전략",
-      description: "코인별로 단타/스윙/장기보유 전략을 다르게 설정",
-      icon: CpuChipIcon,
-      stats: "127개 코인",
-    },
-    {
-      title: "백테스팅",
-      description: "과거 데이터로 전략을 검증하고 최적화",
-      icon: ChartBarIcon,
-      stats: "3년간 데이터",
-    },
-    {
-      title: "리스크 관리",
-      description: "안전성을 최우선으로 하는 투자 시스템",
-      icon: ShieldCheckIcon,
-      stats: "0.1% 최대손실",
-    },
-  ];
-
-  const benefits = [
-    "실시간 AI 분석",
-    "24/7 자동 모니터링",
-    "리스크 관리 시스템",
-    "백테스팅 지원",
-    "모바일 알림",
-    "전문가 지원",
-  ];
+  // 인증 완료 시 즉시 리다이렉트 (가드 방식과 중복 방지)
+  useEffect(() => {
+    if (!authLoading && isAuthenticated) {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [authLoading, isAuthenticated, navigate]);
 
   const isLoading = loading || authLoading;
+
+  // 가드 스타일 선호 시: 한 줄로 처리 가능
+  if (!authLoading && isAuthenticated) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 relative overflow-hidden">

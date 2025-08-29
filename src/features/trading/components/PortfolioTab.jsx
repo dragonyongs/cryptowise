@@ -1,8 +1,10 @@
 // src/features/trading/components/PortfolioTab.jsx
-import React, { useMemo, useEffect, useState } from "react";
+import React, { useMemo } from "react";
 import { formatCurrency, formatPercent } from "../../../utils/formatters";
 import { usePortfolioStore } from "../../../stores/portfolioStore";
-import { PORTFOLIO_CONFIG } from "../../../config/portfolioConfig";
+import { usePortfolioConfig } from "../../../config/portfolioConfig";
+import { useCapital } from "../../../hooks/useCapital";
+
 import {
   PieChartIcon,
   TrendingUpIcon,
@@ -14,44 +16,17 @@ import {
 } from "lucide-react";
 
 const PortfolioTab = ({ portfolio, totalValue }) => {
-  const [initialCapital, setInitialCapital] = useState(1840000);
-  const portfolioStatsFromStore = usePortfolioStore((state) => state.portfolioStats);
-
-  // 🔥 초기 자본 로드 및 업데이트 감지
-  useEffect(() => {
-    const updateInitialCapital = () => {
-      const storeInitialCapital = portfolioStatsFromStore?.initialCapital;
-      if (storeInitialCapital && storeInitialCapital > 0) {
-        setInitialCapital(storeInitialCapital);
-        return;
-      }
-
-      const configInitialCapital = PORTFOLIO_CONFIG?.getCurrentPortfolioValue?.();
-      if (configInitialCapital > 0) {
-        setInitialCapital(configInitialCapital);
-        return;
-      }
-
-      const currentTotal = totalValue || portfolio?.totalValue;
-      if (currentTotal && currentTotal > 0 && initialCapital === 1840000) {
-        setInitialCapital(currentTotal);
-        if (PORTFOLIO_CONFIG?.setInitialCapital) {
-          PORTFOLIO_CONFIG.setInitialCapital(currentTotal);
-        }
-      }
-    };
-
-    updateInitialCapital();
-  }, [portfolio, totalValue, portfolioStatsFromStore, initialCapital]);
+  const { config } = usePortfolioConfig();
+  const initialCapital = config?.initialCapital || 0;
+  const { capital, formatCapital } = useCapital();
 
   // ✅ 안전한 포트폴리오 데이터 추출
   const portfolioData = useMemo(() => {
     if (!portfolio) {
-      const fallbackCash = initialCapital > 0 ? initialCapital : 3000000;
       return {
         coins: [],
-        cash: { symbol: "KRW", value: fallbackCash, percentage: 100 },
-        totalValue: fallbackCash
+        cash: { symbol: "KRW", value: capital, percentage: 100 },
+        totalValue: capital
       };
     }
 
@@ -299,8 +274,8 @@ const PortfolioTab = ({ portfolio, totalValue }) => {
                         </div>
                         {coin.tier && (
                           <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${coin.tier === 'TIER1' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
-                              coin.tier === 'TIER2' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200' :
-                                'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                            coin.tier === 'TIER2' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200' :
+                              'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
                             }`}>
                             {coin.tier}
                           </span>

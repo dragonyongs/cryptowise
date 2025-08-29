@@ -1,11 +1,12 @@
 // src/config/portfolioConfig.js
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useCapital } from "../hooks/useCapital";
 
 // 🎯 중앙화된 포트폴리오 상수
 export const PORTFOLIO_CONSTANTS = {
   DEFAULT_INITIAL_BALANCE: 0,
   FALLBACK_INITIAL_BALANCE: 1840000,
-  BACKUP_INITIAL_BALANCE: 2000000,
+  BACKUP_INITIAL_BALANCE: 3000000,
 
   CUSTOM_CAPITAL: {
     development: 3000000,
@@ -106,7 +107,7 @@ class PortfolioValueCache {
     this.subscribers = new Set();
   }
 
-  // 구독자 등록
+  // 🔥 캐시된 포트폴리오 값 관리
   subscribe(callback) {
     this.subscribers.add(callback);
     return () => this.subscribers.delete(callback);
@@ -468,18 +469,18 @@ export const usePortfolioConfig = (customCapital = null, userId = null) => {
   const environment = process.env.NODE_ENV;
   const mountedRef = useRef(true);
   const updateTimeoutRef = useRef(null);
-
+  const { capital: currentCapital, isInitialized } = useCapital();
   // 🔥 메모이제이션된 초기 설정
   const initialConfig = useMemo(
     () => ({
-      initialCapital: portfolioValueCache.getCurrentValue(),
+      initialCapital: currentCapital,
       allocations: { ...PORTFOLIO_CONSTANTS.DEFAULT_ALLOCATIONS },
       strategy: { ...PORTFOLIO_CONSTANTS.DEFAULT_STRATEGY },
       indicators: { ...PORTFOLIO_CONSTANTS.DEFAULT_INDICATORS },
       riskManagement: { ...PORTFOLIO_CONSTANTS.DEFAULT_RISK_MANAGEMENT },
       feeConfig: { ...PORTFOLIO_CONSTANTS.FEE_CONFIG },
     }),
-    []
+    [currentCapital]
   );
 
   const [config, setConfig] = useState(initialConfig);
@@ -489,7 +490,7 @@ export const usePortfolioConfig = (customCapital = null, userId = null) => {
 
   // 🔥 디바운싱된 설정 업데이트 함수
   const debouncedUpdateConfig = useCallback((updates) => {
-    if (!mountedRef.current) return;
+    [currentCapital];
 
     if (updateTimeoutRef.current) {
       clearTimeout(updateTimeoutRef.current);
